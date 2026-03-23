@@ -1,8 +1,6 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { Task, AdminOptions, AppUser, UserRole } from '../types';
 import { mockTasks } from '../data';
-
-const NAV_ACCESS_KEY = 'seo_nav_access';
 
 const defaultAdminOptions: AdminOptions = {
   clients: ['Aashish Metals', 'Amardeep', 'DSE', 'JadeAlloys', 'KPS', 'KPSol', 'Metinoxoverseas', 'Milife', 'Navyug', 'Petverse', 'SPAT', 'Solitaire', 'USA piping', 'Unifit'],
@@ -36,6 +34,23 @@ const defaultUsers: AppUser[] = [
   { id: 'shubham', name: 'Shubham', password: 'shubham123', role: 'web', ownerName: 'Shubham' },
 ];
 
+// ── API helpers ───────────────────────────────────────
+function saveTasksToApi(tasks: Task[]) {
+  fetch('/api/tasks', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(tasks),
+  }).catch(err => console.error('Failed to save tasks:', err));
+}
+
+function saveConfigToApi(key: string, value: unknown) {
+  fetch(`/api/config/${key}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(value),
+  }).catch(err => console.error(`Failed to save ${key}:`, err));
+}
+
 interface AppContextType {
   tasks: Task[];
   setTasks: React.Dispatch<React.SetStateAction<Task[]>>;
@@ -56,31 +71,99 @@ const AppContext = createContext<AppContextType | undefined>(undefined);
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [tasks, setTasks] = useState<Task[]>(mockTasks);
   const [adminOptions, setAdminOptions] = useState<AdminOptions>(defaultAdminOptions);
-  const [users, setUsers] = useState<AppUser[]>(() => {
-    try {
-      const s = localStorage.getItem('seo_users');
-      const loaded: AppUser[] = s ? JSON.parse(s) : defaultUsers;
-      // Auto-fix: if ownerName is blank, default it to the user's display name
-      return loaded.map(u => ({
-        ...u,
-        ownerName: u.ownerName?.trim() || (u.role !== 'admin' ? u.name.trim() : ''),
-      }));
-    } catch { return defaultUsers; }
-  });
+  const [users, setUsers] = useState<AppUser[]>(defaultUsers);
   const [currentUser, setCurrentUser] = useState<AppUser | null>(() => {
     try { const s = localStorage.getItem('seo_current_user'); return s ? JSON.parse(s) : null; } catch { return null; }
   });
-  // navAccess: key = "tabId:role", value = false means hidden
-  const [navAccess, setNavAccess] = useState<Record<string, boolean>>(() => {
-    try { const s = localStorage.getItem(NAV_ACCESS_KEY); return s ? JSON.parse(s) : {}; } catch { return {}; }
-  });
+  const [navAccess, setNavAccess] = useState<Record<string, boolean>>({});
 
-  useEffect(() => { localStorage.setItem('seo_users', JSON.stringify(users)); }, [users]);
+  // Track whether initial API load is done to avoid saving defaults back
+  const apiLoaded = useRef(false);
+
+  // ── Load from API on mount ──────────────────────────
+  useEffect(() => {
+    (async () => {
+      try {
+        const [apiTasks, apiOptions, apiUsers, apiNav] = await Promise.all([
+          fetch('/api/tasks').then(r => r.json()),
+          fetch('/api/config/admin_options').then(r => r.json()),
+          fetch('/api/config/users').then(r => r.json()),
+          fetch('/api/config/nav_access').then(r => r.json()),
+        ]);
+
+        // Tasks: use API data if exists, else seed DB with defaults
+        if (apiTasks && apiTasks.length > 0) {
+          setTasks(apiTasks);
+        } else {
+          saveTasksToApi(mockTasks);
+        }
+
+        // Admin options
+        if (apiOptions) {
+          setAdminOptions(apiOptions);
+        } else {
+          saveConfigToApi('admin_options', defaultAdminOptions);
+        }
+
+        // Users
+        if (apiUsers && apiUsers.length > 0) {
+          setUsers(apiUsers);
+        } else {
+          saveConfigToApi('users', defaultUsers);
+        }
+
+        // Nav access
+        if (apiNav) {
+          setNavAccess(apiNav);
+        } else {
+          saveConfigToApi('nav_access', {});
+        }
+      } catch (err) {
+        console.warn('API load failed, using defaults:', err);
+      } finally {
+        apiLoaded.current = true;
+      }
+    })();
+  }, []);
+
+  // ── Persist to API on changes (debounced, skip initial load) ──
+  const taskTimer = useRef<ReturnType<typeof setTimeout>>();
+  useEffect(() => {
+    if (!apiLoaded.current) return;
+    clearTimeout(taskTimer.current);
+    taskTimer.current = setTimeout(() => saveTasksToApi(tasks), 400);
+    return () => clearTimeout(taskTimer.current);
+  }, [tasks]);
+
+  const optionsTimer = useRef<ReturnType<typeof setTimeout>>();
+  useEffect(() => {
+    if (!apiLoaded.current) return;
+    clearTimeout(optionsTimer.current);
+    optionsTimer.current = setTimeout(() => saveConfigToApi('admin_options', adminOptions), 400);
+    return () => clearTimeout(optionsTimer.current);
+  }, [adminOptions]);
+
+  const usersTimer = useRef<ReturnType<typeof setTimeout>>();
+  useEffect(() => {
+    if (!apiLoaded.current) return;
+    clearTimeout(usersTimer.current);
+    usersTimer.current = setTimeout(() => saveConfigToApi('users', users), 400);
+    return () => clearTimeout(usersTimer.current);
+  }, [users]);
+
+  const navTimer = useRef<ReturnType<typeof setTimeout>>();
+  useEffect(() => {
+    if (!apiLoaded.current) return;
+    clearTimeout(navTimer.current);
+    navTimer.current = setTimeout(() => saveConfigToApi('nav_access', navAccess), 400);
+    return () => clearTimeout(navTimer.current);
+  }, [navAccess]);
+
+  // Keep currentUser in localStorage (session-only, not DB)
   useEffect(() => {
     if (currentUser) localStorage.setItem('seo_current_user', JSON.stringify(currentUser));
     else localStorage.removeItem('seo_current_user');
   }, [currentUser]);
-  useEffect(() => { localStorage.setItem(NAV_ACCESS_KEY, JSON.stringify(navAccess)); }, [navAccess]);
 
   const login = (name: string, password: string): boolean => {
     const user = users.find(u => u.name.toLowerCase() === name.toLowerCase() && u.password === password);

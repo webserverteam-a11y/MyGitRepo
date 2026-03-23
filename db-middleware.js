@@ -89,7 +89,7 @@ button:hover{background:#2563eb}
 <h1>&#128274; Database Admin</h1>
 <p class="sub">Enter credentials to continue</p>
 <div class="err" id="err">Invalid username or password</div>
-<form id="f" method="POST" action="/db/login">
+<form id="f" method="POST" action="/db-access/login">
 <label for="u">Username</label>
 <input id="u" name="username" required autocomplete="username">
 <label for="p">Password</label>
@@ -103,9 +103,9 @@ if(params.get('error')==='1')document.getElementById('err').style.display='block
 document.getElementById('f').addEventListener('submit',async e=>{
   e.preventDefault();
   const fd=new FormData(e.target);
-  const res=await fetch('/db/login',{method:'POST',headers:{'Content-Type':'application/json'},
+  const res=await fetch('/db-access/login',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({username:fd.get('username'),password:fd.get('password')})});
-  if(res.ok){location.href='/db'}else{document.getElementById('err').style.display='block'}
+  if(res.ok){location.href='/db-access'}else{document.getElementById('err').style.display='block'}
 });
 </script></body></html>`;
 
@@ -150,7 +150,7 @@ header h1{font-size:1.1rem;color:#f8fafc}header h1 span{color:#3b82f6}
 </style></head><body>
 <header>
 <h1>&#128450; <span>DB</span> Admin</h1>
-<a href="/db/logout" class="logout">&#9109; Logout</a>
+<a href="/db-access/logout" class="logout">&#9109; Logout</a>
 </header>
 <div class="wrap">
 <div class="sidebar" id="sidebar">
@@ -176,7 +176,7 @@ const sql=$('#sql'),results=$('#results'),status=$('#status'),tableList=$('#tabl
 async function api(path,body){
   const opts={headers:{'Content-Type':'application/json'}};
   if(body){opts.method='POST';opts.body=JSON.stringify(body)}
-  const r=await fetch('/db/api'+path,opts);
+  const r=await fetch('/db-access/api'+path,opts);
   return r.json();
 }
 
@@ -237,14 +237,14 @@ export default function dbMiddleware(req, res, next) {
   const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
   const pathname = url.pathname;
 
-  // Only handle /db routes
-  if (!pathname.startsWith('/db')) return next();
+  // Only handle /db-access routes
+  if (!pathname.startsWith('/db-access')) return next();
 
   const cookies = parseCookies(req.headers.cookie);
   const authed = isValidSession(cookies[COOKIE_NAME]);
 
-  // --- POST /db/login ---
-  if (pathname === '/db/login' && req.method === 'POST') {
+  // --- POST /db-access/login ---
+  if (pathname === '/db-access/login' && req.method === 'POST') {
     readBody(req).then(body => {
       let username, password;
       try {
@@ -260,7 +260,7 @@ export default function dbMiddleware(req, res, next) {
         const token = createSession();
         res.writeHead(200, {
           'Content-Type': 'application/json',
-          'Set-Cookie': `${COOKIE_NAME}=${token}; Path=/db; HttpOnly; SameSite=Strict; Max-Age=86400`,
+          'Set-Cookie': `${COOKIE_NAME}=${token}; Path=/db-access; HttpOnly; SameSite=Strict; Max-Age=86400`,
         });
         res.end(JSON.stringify({ ok: true }));
       } else {
@@ -270,12 +270,12 @@ export default function dbMiddleware(req, res, next) {
     return;
   }
 
-  // --- GET /db/logout ---
-  if (pathname === '/db/logout') {
+  // --- GET /db-access/logout ---
+  if (pathname === '/db-access/logout') {
     if (cookies[COOKIE_NAME]) sessions.delete(cookies[COOKIE_NAME]);
     res.writeHead(302, {
-      Location: '/db',
-      'Set-Cookie': `${COOKIE_NAME}=; Path=/db; HttpOnly; Max-Age=0`,
+      Location: '/db-access',
+      'Set-Cookie': `${COOKIE_NAME}=; Path=/db-access; HttpOnly; Max-Age=0`,
     });
     res.end();
     return;
@@ -283,7 +283,7 @@ export default function dbMiddleware(req, res, next) {
 
   // --- Login page (not authenticated) ---
   if (!authed) {
-    if (pathname === '/db' || pathname === '/db/') {
+    if (pathname === '/db-access' || pathname === '/db-access/') {
       return sendHtml(res, LOGIN_HTML);
     }
     return sendJson(res, { error: 'Unauthorized' }, 401);
@@ -291,13 +291,13 @@ export default function dbMiddleware(req, res, next) {
 
   // ====== Authenticated routes below ======
 
-  // --- GET /db (admin panel) ---
-  if (pathname === '/db' || pathname === '/db/') {
+  // --- GET /db-access (admin panel) ---
+  if (pathname === '/db-access' || pathname === '/db-access/') {
     return sendHtml(res, ADMIN_HTML);
   }
 
-  // --- GET /db/api/tables ---
-  if (pathname === '/db/api/tables' && req.method === 'GET') {
+  // --- GET /db-access/api/tables ---
+  if (pathname === '/db-access/api/tables' && req.method === 'GET') {
     const db = getDb();
     try {
       const tables = db.prepare(
@@ -317,8 +317,8 @@ export default function dbMiddleware(req, res, next) {
     return;
   }
 
-  // --- POST /db/api/query ---
-  if (pathname === '/db/api/query' && req.method === 'POST') {
+  // --- POST /db-access/api/query ---
+  if (pathname === '/db-access/api/query' && req.method === 'POST') {
     readBody(req).then(body => {
       let sqlText;
       try {
@@ -354,6 +354,6 @@ export default function dbMiddleware(req, res, next) {
     return;
   }
 
-  // Unknown /db route
+  // Unknown /db-access route
   sendJson(res, { error: 'Not found' }, 404);
 }
