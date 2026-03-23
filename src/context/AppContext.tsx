@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
 import { Task, AdminOptions, AppUser, UserRole } from '../types';
 import { mockTasks } from '../data';
 
@@ -80,16 +80,32 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // Track whether initial API load is done to avoid saving defaults back
   const apiLoaded = useRef(false);
 
+  // Refs for latest state (needed by beforeunload handler)
+  const tasksRef = useRef(tasks);
+  const adminOptionsRef = useRef(adminOptions);
+  const usersRef = useRef(users);
+  const navAccessRef = useRef(navAccess);
+  useEffect(() => { tasksRef.current = tasks; }, [tasks]);
+  useEffect(() => { adminOptionsRef.current = adminOptions; }, [adminOptions]);
+  useEffect(() => { usersRef.current = users; }, [users]);
+  useEffect(() => { navAccessRef.current = navAccess; }, [navAccess]);
+
+  // ── Fetch helper (reused by mount + refetch) ────────
+  const fetchFromApi = useCallback(async () => {
+    const [apiTasks, apiOptions, apiUsers, apiNav] = await Promise.all([
+      fetch('/api/tasks', { cache: 'no-store' }).then(r => r.ok ? r.json() : null),
+      fetch('/api/config/admin_options', { cache: 'no-store' }).then(r => r.ok ? r.json() : null),
+      fetch('/api/config/users', { cache: 'no-store' }).then(r => r.ok ? r.json() : null),
+      fetch('/api/config/nav_access', { cache: 'no-store' }).then(r => r.ok ? r.json() : null),
+    ]);
+    return { apiTasks, apiOptions, apiUsers, apiNav };
+  }, []);
+
   // ── Load from API on mount ──────────────────────────
   useEffect(() => {
     (async () => {
       try {
-        const [apiTasks, apiOptions, apiUsers, apiNav] = await Promise.all([
-          fetch('/api/tasks').then(r => r.json()),
-          fetch('/api/config/admin_options').then(r => r.json()),
-          fetch('/api/config/users').then(r => r.json()),
-          fetch('/api/config/nav_access').then(r => r.json()),
-        ]);
+        const { apiTasks, apiOptions, apiUsers, apiNav } = await fetchFromApi();
 
         // Tasks: use API data if exists, else seed DB with defaults
         if (apiTasks && apiTasks.length > 0) {
@@ -131,7 +147,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!apiLoaded.current) return;
     clearTimeout(taskTimer.current);
-    taskTimer.current = setTimeout(() => saveTasksToApi(tasks), 400);
+    taskTimer.current = setTimeout(() => { saveTasksToApi(tasks); taskTimer.current = undefined; }, 150);
     return () => clearTimeout(taskTimer.current);
   }, [tasks]);
 
@@ -139,7 +155,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!apiLoaded.current) return;
     clearTimeout(optionsTimer.current);
-    optionsTimer.current = setTimeout(() => saveConfigToApi('admin_options', adminOptions), 400);
+    optionsTimer.current = setTimeout(() => { saveConfigToApi('admin_options', adminOptions); optionsTimer.current = undefined; }, 150);
     return () => clearTimeout(optionsTimer.current);
   }, [adminOptions]);
 
@@ -147,7 +163,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!apiLoaded.current) return;
     clearTimeout(usersTimer.current);
-    usersTimer.current = setTimeout(() => saveConfigToApi('users', users), 400);
+    usersTimer.current = setTimeout(() => { saveConfigToApi('users', users); usersTimer.current = undefined; }, 150);
     return () => clearTimeout(usersTimer.current);
   }, [users]);
 
@@ -155,9 +171,53 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!apiLoaded.current) return;
     clearTimeout(navTimer.current);
-    navTimer.current = setTimeout(() => saveConfigToApi('nav_access', navAccess), 400);
+    navTimer.current = setTimeout(() => { saveConfigToApi('nav_access', navAccess); navTimer.current = undefined; }, 150);
     return () => clearTimeout(navTimer.current);
   }, [navAccess]);
+
+  // ── Flush pending saves (for beforeunload / visibility) ──
+  const flushPendingSaves = useCallback(() => {
+    if (taskTimer.current) {
+      clearTimeout(taskTimer.current); taskTimer.current = undefined;
+      fetch('/api/tasks', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(tasksRef.current), keepalive: true }).catch(() => {});
+    }
+    if (optionsTimer.current) {
+      clearTimeout(optionsTimer.current); optionsTimer.current = undefined;
+      fetch('/api/config/admin_options', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(adminOptionsRef.current), keepalive: true }).catch(() => {});
+    }
+    if (usersTimer.current) {
+      clearTimeout(usersTimer.current); usersTimer.current = undefined;
+      fetch('/api/config/users', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(usersRef.current), keepalive: true }).catch(() => {});
+    }
+    if (navTimer.current) {
+      clearTimeout(navTimer.current); navTimer.current = undefined;
+      fetch('/api/config/nav_access', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(navAccessRef.current), keepalive: true }).catch(() => {});
+    }
+  }, []);
+
+  // ── Flush on page unload (prevents data loss on refresh) ──
+  useEffect(() => {
+    window.addEventListener('beforeunload', flushPendingSaves);
+    return () => window.removeEventListener('beforeunload', flushPendingSaves);
+  }, [flushPendingSaves]);
+
+  // ── Re-fetch from API when tab becomes visible again ──
+  useEffect(() => {
+    const onVisibility = async () => {
+      if (document.visibilityState !== 'visible' || !apiLoaded.current) return;
+      flushPendingSaves();
+      await new Promise(r => setTimeout(r, 200)); // let flush land
+      try {
+        const { apiTasks, apiOptions, apiUsers, apiNav } = await fetchFromApi();
+        if (apiTasks?.length) setTasks(apiTasks);
+        if (apiOptions) setAdminOptions(apiOptions);
+        if (apiUsers?.length) setUsers(apiUsers);
+        if (apiNav) setNavAccess(apiNav);
+      } catch {}
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, [flushPendingSaves, fetchFromApi]);
 
   // Keep currentUser in localStorage (session-only, not DB)
   useEffect(() => {
