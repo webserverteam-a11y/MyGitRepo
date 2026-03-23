@@ -4,7 +4,7 @@ import { useAppContext } from '../context/AppContext';
 import { useAllOwners } from '../hooks/useAllOwners';
 import { Task, DeptType } from '../types';
 import { X, Plus, Pencil, ExternalLink, Check, ChevronDown, ChevronUp, Play, Clock, RotateCcw, AlertCircle } from 'lucide-react';
-import { calcTaskMs, calcTaskOverrunMs, getTaskEstHours, msToHrs } from '../utils/productiveHours';
+import { calcTaskOverrunMs, getTaskEstHours, msToHrs } from '../utils/productiveHours';
 
 // ── Config ────────────────────────────────────────────────────────────────
 const DEPT_CONFIG: Record<DeptType, { color:string; bg:string; border:string; icon:string }> = {

@@ -108,7 +108,7 @@ export function Dashboard({ tasks: propTasks }: { tasks: Task[] }) {
     const stageBreakdown = Object.entries(stageMap).sort((a,b)=>b[1]-a[1]);
 
     // Monthly budget from config
-    const config = clientConfigs[client] || {};
+    const config: ClientConfig = clientConfigs[client] || { monthlyHours: {} };
     const budgetHrs = config.monthlyHours?.[selectedMonth] || 0;
     const hrsRemaining = budgetHrs > 0 ? budgetHrs - totalActual : null;
     const utilPct = budgetHrs > 0 ? Math.round((totalActual/budgetHrs)*100) : null;
@@ -166,7 +166,7 @@ export function Dashboard({ tasks: propTasks }: { tasks: Task[] }) {
   }, []);
 
   const saveClientEdit = (client: string) => {
-    const prev = clientConfigs[client] || {};
+    const prev: ClientConfig = clientConfigs[client] || { monthlyHours: {} };
     const updated: ClientConfigMap = {
       ...clientConfigs,
       [client]: {
