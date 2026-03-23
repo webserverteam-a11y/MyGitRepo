@@ -1,0 +1,13 @@
+@import "tailwindcss";
+
+/* Portal modal overlay — always on top of everything */
+body > div[style*="position: fixed"],
+body > div[style*="position:fixed"] {
+  z-index: 2147483647 !important;
+}
+
+/* Prevent stacking context on scroll containers */
+#main-scroll {
+  isolation: auto !important;
+  transform: none !important;
+}
