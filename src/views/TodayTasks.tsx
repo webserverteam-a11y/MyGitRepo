@@ -8,6 +8,18 @@ import { X, Play, Pause, CheckCircle2, Pencil, Save, ChevronDown, ChevronUp } fr
 type ExecutionState = 'Not Started' | 'In Progress' | 'Paused' | 'Rework' | 'Ended';
 const TARGET_H = 8;
 
+// Calculate actual hours from timeEvents
+function calcActualHours(events: any[]): number {
+  let ms = 0; let lastStart: number | null = null;
+  for (const e of (events||[])) {
+    const ts = new Date(e.timestamp).getTime();
+    if (e.type==='start'||e.type==='resume'||e.type==='rework_start') lastStart = ts;
+    else if ((e.type==='pause'||e.type==='end') && lastStart) { ms += ts - lastStart; lastStart = null; }
+  }
+  return Math.round((ms/3600000)*100)/100;
+}
+function fmtHrs(h: number) { return h > 0 ? h.toFixed(1) : '—'; }
+
 // Neon status colors
 const NEON: Record<string, { color: string; bg: string; glow: string }> = {
   'Not Started':  { color: '#888780', bg: '#F1EFE8', glow: 'none' },
@@ -123,7 +135,10 @@ function EditTaskModal({ task, onSave, onClose }: { task: Task; onSave: (updated
           {f('Focused Keyword', 'focusedKw')}
           <div className="grid grid-cols-2 gap-3">
             {f('Volume', 'volume', 'number')}
-            {f('Actual Hours', 'actualHours', 'number')}
+            <div>
+              <label className="block text-[10px] font-medium text-zinc-500 mb-1">Actual Hours (auto)</label>
+              <div className="w-full border border-zinc-100 rounded-lg px-2.5 py-1.5 text-xs bg-zinc-50 text-zinc-500">{fmtHrs(calcActualHours(task.timeEvents || []))}</div>
+            </div>
           </div>
           {f('Remarks', 'remarks')}
         </div>
@@ -715,8 +730,8 @@ export function TodayTasks({ tasks: propTasks }: { tasks: Task[] }) {
                     <TH style={{ background: '#FAEEDA', color: '#633806' }}>SEO Owner</TH>
                     <TH style={{ background: '#FAEEDA', color: '#633806' }}>Con. Status</TH>
                     <TH style={{ background: '#FAEEDA', color: '#633806' }}>SEO QC Status</TH>
-                    <TH style={{ background: '#FAEEDA', color: '#633806' }}>Est Hrs</TH>
-                    <TH style={{ background: '#BA7517', color: '#fff' }}>Actual Hrs ✎</TH>
+                    <TH style={{ background: '#BA7517', color: '#fff' }}>Est Hrs ✎</TH>
+                    <TH style={{ background: '#FAEEDA', color: '#633806' }}>Actual Hrs</TH>
                     <TH style={{ background: 'var(--color-background-secondary)' }}>Edit</TH>
                   </tr>
                 ) : (
@@ -727,9 +742,9 @@ export function TodayTasks({ tasks: propTasks }: { tasks: Task[] }) {
                     <TH style={{ background: '#E1F5EE', color: '#085041' }}>Stage</TH>
                     <TH style={{ background: '#E1F5EE', color: '#085041' }}>SEO Owner</TH>
                     <TH style={{ background: '#E1F5EE', color: '#085041' }}>Web Status</TH>
-                    <TH style={{ background: '#E1F5EE', color: '#085041' }}>Est Hrs</TH>
-                    <TH style={{ background: '#1D9E75', color: '#fff' }}>Target URL ✎</TH>
-                    <TH style={{ background: '#1D9E75', color: '#fff' }}>Actual Hrs ✎</TH>
+                    <TH style={{ background: '#1D9E75', color: '#fff' }}>Est Hrs ✎</TH>
+                    <TH style={{ background: '#E1F5EE', color: '#085041' }}>Target URL ✎</TH>
+                    <TH style={{ background: '#E1F5EE', color: '#085041' }}>Actual Hrs</TH>
                     <TH style={{ background: 'var(--color-background-secondary)' }}>Edit</TH>
                   </tr>
                 )}
@@ -805,14 +820,14 @@ export function TodayTasks({ tasks: propTasks }: { tasks: Task[] }) {
                       <TD>{task.seoOwner}</TD>
                       <TD>{statusBadge(task.contentStatus)}</TD>
                       <TD>{statusBadge(task.seoQcStatus)}</TD>
-                      <TD style={{ textAlign: 'center' }}>{task.estHoursContent || '—'}</TD>
                       <TD style={{ background: '#FAEEDA30' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                          <input type="number" value={getInline(task.id, 'actualHours', task.actualHours || '')} onChange={e => setInline(task.id, 'actualHours', Number(e.target.value))}
+                          <input type="number" value={getInline(task.id, 'estHoursContent', task.estHoursContent || '')} onChange={e => setInline(task.id, 'estHoursContent', Number(e.target.value))}
                             style={{ width: 50, fontSize: 11, border: '0.5px solid #FAC775', borderRadius: 5, padding: '2px 5px', background: '#FAEEDA50' }} />
                           {hasInlineEdit && <button onClick={() => saveInline(task.id)} style={{ fontSize: 9, padding: '2px 6px', borderRadius: 5, background: '#BA7517', color: '#fff', cursor: 'pointer', border: 'none' }}>Save</button>}
                         </div>
                       </TD>
+                      <TD style={{ textAlign: 'center', fontSize: 11, color: '#6b7280' }}>{fmtHrs(calcActualHours(task.timeEvents || []))}</TD>
                       <TD><EditBtn /></TD>
                     </tr>
                   );
@@ -826,20 +841,20 @@ export function TodayTasks({ tasks: propTasks }: { tasks: Task[] }) {
                       <TD>{task.seoStage}</TD>
                       <TD>{task.seoOwner}</TD>
                       <TD>{statusBadge(task.webStatus)}</TD>
-                      <TD style={{ textAlign: 'center' }}>{task.estHoursWeb || '—'}</TD>
                       <TD style={{ background: '#E1F5EE30' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                          <input type="text" value={getInline(task.id, 'targetUrl', task.targetUrl || '')} onChange={e => setInline(task.id, 'targetUrl', e.target.value)}
-                            placeholder="Add URL..." style={{ width: 120, fontSize: 10, border: '0.5px solid #9FE1CB', borderRadius: 5, padding: '2px 5px', background: '#E1F5EE50' }} />
+                          <input type="number" value={getInline(task.id, 'estHoursWeb', task.estHoursWeb || '')} onChange={e => setInline(task.id, 'estHoursWeb', Number(e.target.value))}
+                            style={{ width: 50, fontSize: 11, border: '0.5px solid #9FE1CB', borderRadius: 5, padding: '2px 5px', background: '#E1F5EE50' }} />
                           {hasInlineEdit && <button onClick={() => saveInline(task.id)} style={{ fontSize: 9, padding: '2px 6px', borderRadius: 5, background: '#1D9E75', color: '#fff', cursor: 'pointer', border: 'none' }}>Save</button>}
                         </div>
                       </TD>
                       <TD style={{ background: '#E1F5EE30' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                          <input type="number" value={getInline(task.id, 'actualHours', task.actualHours || '')} onChange={e => setInline(task.id, 'actualHours', Number(e.target.value))}
-                            style={{ width: 50, fontSize: 11, border: '0.5px solid #9FE1CB', borderRadius: 5, padding: '2px 5px', background: '#E1F5EE50' }} />
+                          <input type="text" value={getInline(task.id, 'targetUrl', task.targetUrl || '')} onChange={e => setInline(task.id, 'targetUrl', e.target.value)}
+                            placeholder="Add URL..." style={{ width: 120, fontSize: 10, border: '0.5px solid #9FE1CB', borderRadius: 5, padding: '2px 5px', background: '#E1F5EE50' }} />
                         </div>
                       </TD>
+                      <TD style={{ textAlign: 'center', fontSize: 11, color: '#6b7280' }}>{fmtHrs(calcActualHours(task.timeEvents || []))}</TD>
                       <TD><EditBtn /></TD>
                     </tr>
                   );

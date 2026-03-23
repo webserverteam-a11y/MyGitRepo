@@ -6,6 +6,16 @@ import { getDeptDelayedInfo } from '../utils';
 import { Pencil, Check, X, ExternalLink, ChevronDown, ChevronUp, Plus } from 'lucide-react';
 
 const BRAND = '#1E2D8B';
+
+function calcActualHours(events: any[]): number {
+  let ms = 0; let lastStart: number | null = null;
+  for (const e of (events||[])) {
+    const ts = new Date(e.timestamp).getTime();
+    if (e.type==='start'||e.type==='resume'||e.type==='rework_start') lastStart = ts;
+    else if ((e.type==='pause'||e.type==='end') && lastStart) { ms += ts - lastStart; lastStart = null; }
+  }
+  return Math.round((ms/3600000)*100)/100;
+}
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 const CLIENT_CONFIG_KEY = 'seo_client_config';
 
@@ -82,7 +92,7 @@ export function Dashboard({ tasks: propTasks }: { tasks: Task[] }) {
     const allClientTasks = myTasks.filter(t=>t.client===client);
     const monthClientTasks = allClientTasks.filter(t=>(t.intakeDate||'').startsWith(selectedMonth));
     const totalEst = monthClientTasks.reduce((s,t)=>(s+(t.estHoursSEO||t.estHours||0)+(t.estHoursContent||0)+(t.estHoursWeb||0)),0);
-    const totalActual = monthClientTasks.reduce((s,t)=>s+(t.actualHours||0),0);
+    const totalActual = monthClientTasks.reduce((s,t)=>s+calcActualHours(t.timeEvents||[]),0);
     const totalTasks = monthClientTasks.length;
     const done = monthClientTasks.filter(t=>t.isCompleted).length;
     const pending = monthClientTasks.filter(t=>!t.isCompleted).length;
@@ -103,7 +113,7 @@ export function Dashboard({ tasks: propTasks }: { tasks: Task[] }) {
 
     // Prev month comparison
     const prevMonthTasks = allClientTasks.filter(t=>(t.intakeDate||'').startsWith(prevMonth));
-    const prevActual = prevMonthTasks.reduce((s,t)=>s+(t.actualHours||0),0);
+    const prevActual = prevMonthTasks.reduce((s,t)=>s+calcActualHours(t.timeEvents||[]),0);
 
     return { client, allClientTasks, monthClientTasks, totalTasks, done, pending, qc, rw, seoOwners, totalEst, totalActual, prevActual, stageBreakdown, budgetHrs, hrsRemaining, utilPct, config };
   }), [clients, myTasks, selectedMonth, prevMonth, clientConfigs]);

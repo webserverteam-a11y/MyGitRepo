@@ -8,6 +8,17 @@ import { Pencil, X, ChevronUp, ChevronDown } from 'lucide-react';
 
 type SortKey = 'intakeDate' | 'title' | 'client' | 'seoOwner' | 'estHours' | 'actualHours' | 'status';
 
+function calcActualHours(events: any[]): number {
+  let ms = 0; let lastStart: number | null = null;
+  for (const e of (events||[])) {
+    const ts = new Date(e.timestamp).getTime();
+    if (e.type==='start'||e.type==='resume'||e.type==='rework_start') lastStart = ts;
+    else if ((e.type==='pause'||e.type==='end') && lastStart) { ms += ts - lastStart; lastStart = null; }
+  }
+  return Math.round((ms/3600000)*100)/100;
+}
+function fmtHrs(h: number) { return h > 0 ? h.toFixed(1) : '—'; }
+
 const NEON: Record<string, { color: string; bg: string; glow: string }> = {
   'Not Started':  { color: '#888780', bg: '#F1EFE8', glow: 'none' },
   'In Progress':  { color: '#2563EB', bg: '#EFF6FF', glow: '0 0 6px #60A5FA50' },
@@ -129,7 +140,7 @@ export function AllTasks({ tasks }: { tasks: Task[] }) {
       else if (sortKey === 'client') { av = a.client; bv = b.client; }
       else if (sortKey === 'seoOwner') { av = a.seoOwner; bv = b.seoOwner; }
       else if (sortKey === 'estHours') { av = a.estHoursSEO||a.estHours||0; bv = b.estHoursSEO||b.estHours||0; }
-      else if (sortKey === 'actualHours') { av = a.actualHours||0; bv = b.actualHours||0; }
+      else if (sortKey === 'actualHours') { av = calcActualHours(a.timeEvents||[]); bv = calcActualHours(b.timeEvents||[]); }
       else { av = getTaskStatus(a); bv = getTaskStatus(b); }
       if (av < bv) return sortDir === 'asc' ? -1 : 1;
       if (av > bv) return sortDir === 'asc' ? 1 : -1;
@@ -179,9 +190,9 @@ export function AllTasks({ tasks }: { tasks: Task[] }) {
     const twoDaysAgo = new Date(); twoDaysAgo.setDate(twoDaysAgo.getDate()-3);
     const stale = tasks.filter(t => (!t.executionState||t.executionState==='Not Started') && !t.isCompleted && t.intakeDate <= twoDaysAgo.toISOString().split('T')[0]).length;
     if (stale > 0) pills.push({ icon:'🕐', text:`${stale} tasks not started in 3+ days`, color:'#D97706', bg:'#FFFBEB', glow:'none' });
-    const withHrs = tasks.filter(t => t.actualHours && (t.estHoursSEO||t.estHours));
+    const withHrs = tasks.filter(t => calcActualHours(t.timeEvents||[]) > 0 && (t.estHoursSEO||t.estHours));
     if (withHrs.length > 0) {
-      const avg = withHrs.reduce((s,t) => s + (t.actualHours||0)/(t.estHoursSEO||t.estHours||1), 0) / withHrs.length;
+      const avg = withHrs.reduce((s,t) => s + calcActualHours(t.timeEvents||[])/(t.estHoursSEO||t.estHours||1), 0) / withHrs.length;
       pills.push({ icon:'📊', text:`Avg actual vs est: ${avg.toFixed(1)}×${avg>1?' over':' under'}`, color:'#2563EB', bg:'#EFF6FF', glow:'none' });
     }
     return pills;
@@ -202,7 +213,7 @@ export function AllTasks({ tasks }: { tasks: Task[] }) {
 
   const exportCSV = () => {
     const h = ['Task ID','Intake Date','Title','Client','Stage','SEO Owner','Con. Owner','Con. Status','Web Owner','Web Status','Est Hrs','Actual Hrs','Current Owner','Status'];
-    const rows = sorted.map(t => [t.id, t.intakeDate, `"${t.title.replace(/"/g,'""')}"`, t.client, t.seoStage, t.seoOwner, t.contentOwner||'', t.contentStatus||'', t.webOwner||'', t.webStatus||'', t.estHoursSEO||t.estHours||'', t.actualHours||'', t.currentOwner, getTaskStatus(t)].join(','));
+    const rows = sorted.map(t => [t.id, t.intakeDate, `"${t.title.replace(/"/g,'""')}"`, t.client, t.seoStage, t.seoOwner, t.contentOwner||'', t.contentStatus||'', t.webOwner||'', t.webStatus||'', t.estHoursSEO||t.estHours||'', calcActualHours(t.timeEvents||[]) || '', t.currentOwner, getTaskStatus(t)].join(','));
     const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([[h.join(','), ...rows].join('\n')], {type:'text/csv'}));
     a.download = `all-tasks-${dateFrom||'all'}.csv`; a.click();
   };
@@ -392,7 +403,7 @@ export function AllTasks({ tasks }: { tasks: Task[] }) {
                     <TD style={{ background:'#E1F5EE08' }}>
                       {task.webStatus ? <NeonPill label={task.webStatus === 'Pending QC' ? 'QC Submitted' : task.webStatus} /> : <span style={{ color:'var(--color-text-tertiary)' }}>—</span>}
                     </TD>
-                    <TD style={{ textAlign:'center' }}>{task.actualHours || '—'}</TD>
+                    <TD style={{ textAlign:'center' }}>{fmtHrs(calcActualHours(task.timeEvents || []))}</TD>
                     <TD><span style={{ fontSize:10, fontWeight:500, padding:'2px 7px', borderRadius:99, color:deptColor, background:deptBg }}>{task.currentOwner}</span></TD>
                     <TD><NeonPill label={delayed ? 'Delayed' : status} /></TD>
                     <TD>
