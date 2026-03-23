@@ -3,6 +3,7 @@ import { useAppContext } from '../context/AppContext';
 import { Task } from '../types';
 import { getDeptDelayedInfo } from '../utils';
 import { X, ExternalLink, ChevronDown, ChevronUp, ChevronRight } from 'lucide-react';
+import { calcTaskMs, calcTaskOverrunMs, getTaskEstHours, msToHrs } from '../utils/productiveHours';
 
 type SortKey = 'intakeDate' | 'title' | 'actualHours' | 'days';
 
@@ -156,7 +157,7 @@ export function ClientView({ tasks }: { tasks: Task[] }) {
       let av: any, bv: any;
       if (sk === 'intakeDate') { av = a.intakeDate; bv = b.intakeDate; }
       else if (sk === 'title') { av = a.title; bv = b.title; }
-      else if (sk === 'actualHours') { av = a.actualHours||0; bv = b.actualHours||0; }
+      else if (sk === 'actualHours') { av = msToHrs(calcTaskMs(a.timeEvents||[])); bv = msToHrs(calcTaskMs(b.timeEvents||[])); }
       else { av = a.daysInStage||0; bv = b.daysInStage||0; }
       if (av < bv) return dir==='asc' ? -1 : 1;
       if (av > bv) return dir==='asc' ? 1 : -1;
@@ -186,7 +187,7 @@ export function ClientView({ tasks }: { tasks: Task[] }) {
   const inProgress = clientTasks.filter(t => t.executionState === 'In Progress').length;
   const delayed = clientTasks.filter(t => isDelayed(t)).length;
   const estHrsLeft = clientTasks.filter(t => !t.isCompleted).reduce((s,t) => s + (t.estHoursSEO||t.estHours||0) + (t.estHoursContent||0) + (t.estHoursWeb||0), 0);
-  const actualHrs = clientTasks.reduce((s,t) => s + (t.actualHours||0), 0);
+  const actualHrs = clientTasks.reduce((s,t) => s + msToHrs(calcTaskMs(t.timeEvents||[])), 0);
   const estTotal = clientTasks.reduce((s,t) => s + (t.estHoursSEO||t.estHours||0) + (t.estHoursContent||0) + (t.estHoursWeb||0), 0);
   const healthScore = total > 0 ? Math.max(0, Math.round(((completed - delayed)/total)*100)) : 0;
   const healthColor = healthScore >= 70 ? '#059669' : healthScore >= 40 ? '#D97706' : '#DC2626';
@@ -204,10 +205,12 @@ export function ClientView({ tasks }: { tasks: Task[] }) {
 
   // Export CSV (client-safe)
   const exportCSV = () => {
-    const h = ['Date','Task','Stage','SEO Owner','Keyword','Volume','Monthly Rank','Cur Rank','Rank Change','Status','Target URL','Remarks'];
+    const h = ['Date','Task','Stage','SEO Owner','Keyword','Volume','Monthly Rank','Cur Rank','Rank Change','Status','Target URL','Actual Hrs','Overrun','Remarks'];
     const rows = clientTasks.map(t => {
       const diff = t.marRank && t.currentRank ? t.marRank - t.currentRank : '';
-      return [t.intakeDate, `"${t.title.replace(/"/g,'""')}"`, t.seoStage, t.seoOwner, t.focusedKw||'', t.volume||'', t.marRank||'', t.currentRank||'', diff ? (Number(diff)>0?`+${diff}`:String(diff)) : '', t.isCompleted?'Completed':t.executionState||'Not Started', t.targetUrl||'', `"${(t.remarks||'').replace(/"/g,'""')}"`].join(',');
+      const actH = msToHrs(calcTaskMs(t.timeEvents||[]));
+      const ovH = msToHrs(calcTaskOverrunMs(t.timeEvents||[], getTaskEstHours(t)));
+      return [t.intakeDate, `"${t.title.replace(/"/g,'""')}"`, t.seoStage, t.seoOwner, t.focusedKw||'', t.volume||'', t.marRank||'', t.currentRank||'', diff ? (Number(diff)>0?`+${diff}`:String(diff)) : '', t.isCompleted?'Completed':t.executionState||'Not Started', t.targetUrl||'', actH>0?actH.toFixed(1):'', ovH>0?ovH.toFixed(1):'', `"${(t.remarks||'').replace(/"/g,'""')}"`].join(',');
     });
     const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([[h.join(','),...rows].join('\n')],{type:'text/csv'}));
     a.download = `${selectedClient}-${activeChip.replace(' ','-')}.csv`; a.click();
@@ -348,18 +351,21 @@ export function ClientView({ tasks }: { tasks: Task[] }) {
           <th style={{ fontSize:9, fontWeight:600, textTransform:'uppercase', padding:'6px 9px', background:'#E6F1FB', color:'#0C447C', whiteSpace:'nowrap', borderBottom:'0.5px solid #B5D4F4' }}>Actual</th>
           <th style={{ fontSize:9, fontWeight:600, textTransform:'uppercase', padding:'6px 9px', background:'#E6F1FB', color:'#0C447C', whiteSpace:'nowrap', borderBottom:'0.5px solid #B5D4F4' }}>Remarks</th>
         </>}
-        renderRow={(t) => (
+        renderRow={(t) => {
+          const ovMs = calcTaskOverrunMs(t.timeEvents||[], getTaskEstHours(t));
+          return (
           <tr key={t.id} style={{ background: isDelayed(t) ? '#FEF2F210' : 'transparent' }} className="hover:brightness-95">
-            <TD><div style={{ fontWeight:500, color:'var(--color-text-primary)', maxWidth:220, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }} title={t.title}>{t.title}{t.docUrl && <a href={t.docUrl} target="_blank" rel="noreferrer" style={{ marginLeft:5, color:'#185FA5' }}><ExternalLink size={10}/></a>}</div></TD>
+            <TD><div style={{ display:'flex', alignItems:'center', gap:4 }}><div style={{ fontWeight:500, color:'var(--color-text-primary)', maxWidth:200, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }} title={t.title}>{t.title}{t.docUrl && <a href={t.docUrl} target="_blank" rel="noreferrer" style={{ marginLeft:5, color:'#185FA5' }}><ExternalLink size={10}/></a>}</div>{ovMs > 0 && <span style={{ fontSize:8, fontWeight:600, color:'#DC2626', flexShrink:0 }}>⚠</span>}</div></TD>
             <TD>{t.seoOwner}</TD><TD>{t.seoStage}</TD>
             <TD>{t.seoQcStatus ? <NeonPill label={t.seoQcStatus==='Pending QC'||t.seoQcStatus==='QC'?'QC Submitted':t.seoQcStatus} size="xs"/> : '—'}</TD>
             <TD><span style={{ fontSize:10, fontWeight:500, padding:'1px 6px', borderRadius:99, color:'#0C447C', background:'#E6F1FB' }}>{t.currentOwner||'SEO'}</span></TD>
             <TD style={{ textAlign:'center', color: (t.daysInStage||0)>3 ? '#DC2626' : 'var(--color-text-secondary)' }}>{t.daysInStage||0}</TD>
             <TD style={{ textAlign:'center' }}>{t.estHoursSEO||t.estHours||'—'}</TD>
-            <TD style={{ textAlign:'center' }}>{t.actualHours||'—'}</TD>
+            <TD style={{ textAlign:'center' }}>{msToHrs(calcTaskMs(t.timeEvents||[])) > 0 ? msToHrs(calcTaskMs(t.timeEvents||[])).toFixed(1) : (t.actualHours||'—')}</TD>
             <TD style={{ maxWidth:140, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{t.remarks||'—'}</TD>
           </tr>
-        )}
+          );
+        }}
       />
 
       {/* Content Tasks table */}
@@ -379,18 +385,21 @@ export function ClientView({ tasks }: { tasks: Task[] }) {
           <th style={{ fontSize:9, fontWeight:600, textTransform:'uppercase', padding:'6px 9px', background:'#FAEEDA', color:'#633806', whiteSpace:'nowrap', borderBottom:'0.5px solid #FAC775' }}>Actual Hrs</th>
           <th style={{ fontSize:9, fontWeight:600, textTransform:'uppercase', padding:'6px 9px', background:'#FAEEDA', color:'#633806', whiteSpace:'nowrap', borderBottom:'0.5px solid #FAC775' }}>Remarks</th>
         </>}
-        renderRow={(t) => (
+        renderRow={(t) => {
+          const ovMs = calcTaskOverrunMs(t.timeEvents||[], getTaskEstHours(t));
+          return (
           <tr key={t.id} className="hover:brightness-95">
-            <TD><div style={{ fontWeight:500, color:'var(--color-text-primary)', maxWidth:220, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }} title={t.title}>{t.title}</div></TD>
+            <TD><div style={{ display:'flex', alignItems:'center', gap:4 }}><div style={{ fontWeight:500, color:'var(--color-text-primary)', maxWidth:200, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }} title={t.title}>{t.title}</div>{ovMs > 0 && <span style={{ fontSize:8, fontWeight:600, color:'#DC2626', flexShrink:0 }}>⚠</span>}</div></TD>
             <TD>{t.seoOwner}</TD><TD style={{ color:'#B45309' }}>{t.contentOwner||'—'}</TD>
             <TD>{t.contentStatus ? <NeonPill label={t.contentStatus==='Pending QC'||t.contentStatus==='QC'?'QC Submitted':t.contentStatus} size="xs"/> : '—'}</TD>
             <TD><span style={{ fontSize:10, fontWeight:500, padding:'1px 6px', borderRadius:99, color:'#633806', background:'#FAEEDA' }}>Content</span></TD>
             <TD style={{ textAlign:'center' }}>{t.daysInStage||0}</TD>
             <TD style={{ textAlign:'center' }}>{t.estHoursContent||'—'}</TD>
-            <TD style={{ textAlign:'center' }}>{t.actualHours||'—'}</TD>
+            <TD style={{ textAlign:'center' }}>{msToHrs(calcTaskMs(t.timeEvents||[])) > 0 ? msToHrs(calcTaskMs(t.timeEvents||[])).toFixed(1) : (t.actualHours||'—')}</TD>
             <TD style={{ maxWidth:140, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{t.remarks||'—'}</TD>
           </tr>
-        )}
+          );
+        }}
       />
 
       {/* Web Tasks table */}
@@ -409,17 +418,20 @@ export function ClientView({ tasks }: { tasks: Task[] }) {
           <th style={{ fontSize:9, fontWeight:600, textTransform:'uppercase', padding:'6px 9px', background:'#E1F5EE', color:'#085041', whiteSpace:'nowrap', borderBottom:'0.5px solid #9FE1CB' }}>Actual Hrs</th>
           <th style={{ fontSize:9, fontWeight:600, textTransform:'uppercase', padding:'6px 9px', background:'#E1F5EE', color:'#085041', whiteSpace:'nowrap', borderBottom:'0.5px solid #9FE1CB' }}>Target URL</th>
         </>}
-        renderRow={(t) => (
+        renderRow={(t) => {
+          const ovMs = calcTaskOverrunMs(t.timeEvents||[], getTaskEstHours(t));
+          return (
           <tr key={t.id} style={{ background: (t.daysInStage||0) > 0 && !t.targetUrl ? '#FFFBEB20' : 'transparent' }} className="hover:brightness-95">
-            <TD><div style={{ fontWeight:500, color:'var(--color-text-primary)', maxWidth:220, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }} title={t.title}>{t.title}</div></TD>
+            <TD><div style={{ display:'flex', alignItems:'center', gap:4 }}><div style={{ fontWeight:500, color:'var(--color-text-primary)', maxWidth:200, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }} title={t.title}>{t.title}</div>{ovMs > 0 && <span style={{ fontSize:8, fontWeight:600, color:'#DC2626', flexShrink:0 }}>⚠</span>}</div></TD>
             <TD>{t.seoOwner}</TD><TD style={{ color:'#065F46' }}>{t.webOwner||'—'}</TD>
             <TD>{t.webStatus ? <NeonPill label={t.webStatus==='Pending QC'?'QC Submitted':t.webStatus} size="xs"/> : '—'}</TD>
             <TD style={{ textAlign:'center', color:(t.daysInStage||0)>3?'#DC2626':'var(--color-text-secondary)' }}>{t.daysInStage||0}</TD>
             <TD style={{ textAlign:'center' }}>{t.estHoursWeb||'—'}</TD>
-            <TD style={{ textAlign:'center' }}>{t.actualHours||'—'}</TD>
+            <TD style={{ textAlign:'center' }}>{msToHrs(calcTaskMs(t.timeEvents||[])) > 0 ? msToHrs(calcTaskMs(t.timeEvents||[])).toFixed(1) : (t.actualHours||'—')}</TD>
             <TD>{t.targetUrl ? <a href={t.targetUrl} target="_blank" rel="noreferrer" style={{ fontSize:10, color:'#185FA5', display:'flex', alignItems:'center', gap:3, maxWidth:140, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}><ExternalLink size={10}/>{t.targetUrl}</a> : <span style={{ color:'#DC2626', fontSize:10 }}>Missing</span>}</TD>
           </tr>
-        )}
+          );
+        }}
       />
 
       {/* Completed Tasks — includes keyword data */}

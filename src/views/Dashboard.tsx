@@ -5,6 +5,8 @@ import { Task } from '../types';
 import { getDeptDelayedInfo } from '../utils';
 import { Pencil, Check, X, ExternalLink, ChevronDown, ChevronUp, Plus } from 'lucide-react';
 
+import { calcOwnerProductiveHrs, calcOwnerOverrunHrs } from '../utils/productiveHours';
+
 const BRAND = '#1E2D8B';
 
 function calcActualHours(events: any[]): number {
@@ -126,18 +128,14 @@ export function Dashboard({ tasks: propTasks }: { tasks: Task[] }) {
       return Array.from(new Set([...fromUsers, ...fromLists])).filter(Boolean);
     })();
     return allOwners.map(name => {
-      const ownerTasks = myTasks.filter(t=>!t.isCompleted&&(t.seoOwner===name||t.contentOwner===name||t.webOwner===name));
-      const assigned = ownerTasks.reduce((s,t)=>{
-        if(t.seoOwner===name) s+=(t.estHoursSEO||t.estHours||0);
-        if(t.contentOwner===name) s+=(t.estHoursContent||0);
-        if(t.webOwner===name) s+=(t.estHoursWeb||0);
-        return s;
-      },0);
-      const pct = Math.min(100, Math.round(assigned/8*100));
-      const color = pct>=90?'#059669':pct>=50?'#185FA5':'#E24B4A';
-      return { name, assigned, pct, color, taskCount: ownerTasks.length };
+      const productive = calcOwnerProductiveHrs(myTasks, name, todayStr, todayStr);
+      const overrun = calcOwnerOverrunHrs(myTasks, name, todayStr, todayStr);
+      const pct = Math.min(100, Math.round(productive/8*100));
+      const color = overrun > 0 ? '#DC2626' : pct>=50 ? '#059669' : pct > 0 ? '#185FA5' : '#888780';
+      const taskCount = myTasks.filter(t=>!t.isCompleted&&(t.seoOwner===name||t.contentOwner===name||t.webOwner===name)).length;
+      return { name, productive, overrun, pct, color, taskCount };
     });
-  }, [myTasks, adminOptions, users]);
+  }, [myTasks, adminOptions, users, todayStr]);
 
   // Insight pills
   const insights = useMemo(() => {
@@ -147,7 +145,7 @@ export function Dashboard({ tasks: propTasks }: { tasks: Task[] }) {
     if (rework>0) pills.push({ icon:'↺', text:`${rework} rework open`, color:'#7C3AED', bg:'#F5F3FF', glow:'0 0 6px #A78BFA40' });
     const over = clientData.filter(c=>c.utilPct!==null&&c.utilPct>100);
     if (over.length>0) pills.push({ icon:'📊', text:`${over.length} client${over.length>1?'s':''} over budget — ${over.slice(0,2).map(c=>c.client).join(', ')}`, color:'#DC2626', bg:'#FEF2F2', glow:'none' });
-    const under = ownerWorkload.filter(o=>o.assigned===0);
+    const under = ownerWorkload.filter(o=>o.productive===0);
     if (under.length>0) pills.push({ icon:'⏱', text:`${under.map(o=>o.name).join(', ')} — no tasks assigned today`, color:'#D97706', bg:'#FFFBEB', glow:'none' });
     const noStrategy = clientData.filter(c=>c.monthClientTasks.length>0&&!c.config.strategyUrl);
     if (noStrategy.length>0) pills.push({ icon:'📄', text:`${noStrategy.length} active client${noStrategy.length>1?'s':''} missing strategy doc`, color:'#888780', bg:'#F1EFE8', glow:'none' });
@@ -245,7 +243,7 @@ export function Dashboard({ tasks: propTasks }: { tasks: Task[] }) {
 
       {/* Owner workload (slim) */}
       <div style={{ background:'var(--color-background-primary)', border:'0.5px solid var(--color-border-tertiary)', borderRadius:10, padding:'10px 14px' }}>
-        <p style={{ fontSize:9, fontWeight:500, color:'var(--color-text-tertiary)', textTransform:'uppercase', letterSpacing:'.04em', marginBottom:8 }}>Owner workload — today vs 8h target</p>
+        <p style={{ fontSize:9, fontWeight:500, color:'var(--color-text-tertiary)', textTransform:'uppercase', letterSpacing:'.04em', marginBottom:8 }}>Owner workload — today (productive / 8h)</p>
         <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(200px,1fr))', gap:8 }}>
           {ownerWorkload.map(o => (
             <div key={o.name} style={{ display:'flex', alignItems:'center', gap:8 }}>
@@ -255,7 +253,7 @@ export function Dashboard({ tasks: propTasks }: { tasks: Task[] }) {
               <div style={{ flex:1, minWidth:0 }}>
                 <div style={{ display:'flex', justifyContent:'space-between', marginBottom:3 }}>
                   <span style={{ fontSize:11, fontWeight:500, color:'var(--color-text-primary)' }}>{o.name}</span>
-                  <span style={{ fontSize:10, color:o.color }}>{o.assigned.toFixed(1)}h · {o.pct}%</span>
+                  <span style={{ fontSize:10, color:o.color }}>{o.productive.toFixed(1)}h productive{o.overrun>0.01?` · ${o.overrun.toFixed(1)}h overrun`:''}</span>
                 </div>
                 <div style={{ height:4, background:'var(--color-background-secondary)', borderRadius:2, overflow:'hidden' }}>
                   <div style={{ height:'100%', width:`${o.pct}%`, background:o.color, borderRadius:2 }} />

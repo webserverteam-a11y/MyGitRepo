@@ -4,6 +4,7 @@ import { useAppContext } from '../context/AppContext';
 import { useAllOwners } from '../hooks/useAllOwners';
 import { Task, DeptType } from '../types';
 import { X, Plus, Pencil, ExternalLink, Check, ChevronDown, ChevronUp, Play, Clock, RotateCcw, AlertCircle } from 'lucide-react';
+import { calcTaskMs, calcTaskOverrunMs, getTaskEstHours, msToHrs } from '../utils/productiveHours';
 
 // ── Config ────────────────────────────────────────────────────────────────
 const DEPT_CONFIG: Record<DeptType, { color:string; bg:string; border:string; icon:string }> = {
@@ -630,14 +631,14 @@ export function WorkHub() {
             <table style={{ width:'100%', borderCollapse:'collapse', minWidth:920 }}>
               <thead style={{ position:'sticky', top:0, zIndex:2 }}>
                 <tr>
-                  {['Date','Task','Dept','Type','Client','Assigned','Due','Status','Est h','Act h','Doc / Brief','Deliverable','Timer','History'].map(h=>(
+                  {['Date','Task','Dept','Type','Client','Assigned','Due','Status','Est h','Act h','Overrun','Doc / Brief','Deliverable','Timer','History'].map(h=>(
                     <th key={h} style={{ fontSize:9, fontWeight:600, textTransform:'uppercase', letterSpacing:'.04em', padding:'6px 8px', borderBottom:'0.5px solid var(--color-border-tertiary)', textAlign:'left', background:'#f8f9fa', color:'#9ca3af', whiteSpace:'nowrap' }}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {paginated.length===0 ? (
-                  <tr><td colSpan={14} style={{ padding:24, textAlign:'center', fontSize:12, color:'#9ca3af', fontStyle:'italic' }}>
+                  <tr><td colSpan={15} style={{ padding:24, textAlign:'center', fontSize:12, color:'#9ca3af', fontStyle:'italic' }}>
                     No tasks for this period. <button onClick={()=>setChip('all')} style={{ color:'#185FA5', background:'none', border:'none', cursor:'pointer', fontSize:12, textDecoration:'underline' }}>Show all time</button>
                   </td></tr>
                 ) : paginated.map(t => {
@@ -659,6 +660,7 @@ export function WorkHub() {
                       <td style={{ padding:'6px 8px', borderBottom:'0.5px solid var(--color-border-tertiary)' }}><StatusPill status={status}/></td>
                       <td style={{ fontSize:11, padding:'6px 8px', borderBottom:'0.5px solid var(--color-border-tertiary)', textAlign:'center' }}>{t.estHours||'—'}</td>
                       {(() => { const logged = calcActualHours(t.timeEvents||[]); const over = logged>(t.estHours||0)&&(t.estHours||0)>0; return <td style={{ fontSize:11, padding:'6px 8px', borderBottom:'0.5px solid var(--color-border-tertiary)', textAlign:'center', color:over?'#DC2626':'#4b5563', fontWeight:over?500:400 }}>{logged>0?fmtMs(logged*3600000):'—'}</td>; })()}
+                      {(() => { const estH = getTaskEstHours(t); const ovH = msToHrs(calcTaskOverrunMs(t.timeEvents||[], estH)); return <td style={{ fontSize:11, padding:'6px 8px', borderBottom:'0.5px solid var(--color-border-tertiary)', textAlign:'center' }}>{estH === 0 ? <span style={{ fontSize:9, color:'#9ca3af' }}>—<span style={{ fontSize:8, display:'block', color:'#9ca3af' }}>no est</span></span> : ovH > 0 ? <span style={{ fontSize:10, fontWeight:600, padding:'2px 7px', borderRadius:99, color:'#DC2626', background:'#FEF2F2' }}>+{ovH.toFixed(1)}h</span> : <span style={{ color:'#9ca3af' }}>—</span>}</td>; })()}
                       <td style={{ padding:'6px 8px', borderBottom:'0.5px solid var(--color-border-tertiary)' }}>
                         {t.docUrl ? <DocLink url={t.docUrl} label="Brief"/> : <span style={{ fontSize:10, color:'#9ca3af' }}>—</span>}
                       </td>

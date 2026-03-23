@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { useAppContext } from '../context/AppContext';
 import { Task } from '../types';
 import { cn, getDeptDelayedInfo } from '../utils';
+import { getTaskEstHours } from '../utils/productiveHours';
 import { X, Play, Pause, CheckCircle2, Pencil, Save, ChevronDown, ChevronUp } from 'lucide-react';
 
 type ExecutionState = 'Not Started' | 'In Progress' | 'Paused' | 'Rework' | 'Ended';
@@ -213,7 +214,7 @@ function KanbanView({ tasks, onEdit, onMove, onTimeAction }: {
                     <div style={{ fontSize: 10, color: 'var(--color-text-tertiary)', marginBottom: 5 }}>{t.client} · {t.seoStage}</div>
 
                     {/* Live timer */}
-                    {isRunning && <KanbanTimer timeEvents={t.timeEvents || []} state={t.executionState} />}
+                    {isRunning && <KanbanTimer timeEvents={t.timeEvents || []} state={t.executionState} estHours={getTaskEstHours(t)} />}
 
                     {/* Last event */}
                     {t.timeEvents && t.timeEvents.length > 0 && !isRunning && (
@@ -275,7 +276,7 @@ function KanbanView({ tasks, onEdit, onMove, onTimeAction }: {
 }
 
 // Live timer shown on in-progress kanban cards
-function KanbanTimer({ timeEvents, state }: { timeEvents: any[]; state: string }) {
+function KanbanTimer({ timeEvents, state, estHours }: { timeEvents: any[]; state: string; estHours: number }) {
   const [now, setNow] = React.useState(Date.now());
   React.useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000);
@@ -295,12 +296,19 @@ function KanbanTimer({ timeEvents, state }: { timeEvents: any[]; state: string }
   const m = Math.floor((activeMs % 3600000) / 60000);
   const s = Math.floor((activeMs % 60000) / 1000);
   const fmt = `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+  const estMs = estHours * 3600000;
+  const atLimit = estHours > 0 && activeMs >= estMs;
+  const overBy = estHours > 0 ? activeMs - estMs : 0;
+  const overBadge = overBy >= 15 * 60000; // 15 min threshold
 
   return (
-    <div style={{ marginTop: 4, display: 'flex', alignItems: 'center', gap: 5 }}>
+    <div style={{ marginTop: 4, display: 'flex', alignItems: 'center', gap: 5, flexWrap:'wrap' }}>
       <div style={{ width: 6, height: 6, borderRadius: '50%', background: state === 'Rework' ? '#7F77DD' : '#185FA5', animation: 'pulse 1.5s infinite' }} />
       <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 500, color: state === 'Rework' ? '#3C3489' : '#0C447C' }}>{fmt}</span>
-      <span style={{ fontSize: 9, color: 'var(--color-text-tertiary)' }}>active</span>
+      {estHours > 0 && <span style={{ fontSize: 9, color: 'var(--color-text-tertiary)' }}>/ {estHours}h est</span>}
+      {!estHours && <span style={{ fontSize: 9, color: 'var(--color-text-tertiary)' }}>active</span>}
+      {atLimit && !overBadge && <span style={{ fontSize: 8, fontWeight: 600, padding: '1px 6px', borderRadius: 99, color: '#D97706', background: '#FFFBEB', border: '1px solid #D9770640' }}>At limit</span>}
+      {overBadge && <span style={{ fontSize: 8, fontWeight: 600, padding: '1px 6px', borderRadius: 99, color: '#DC2626', background: '#FEF2F2', border: '1px solid #DC262640' }}>Over est +{Math.floor(overBy/3600000)}h{Math.floor((overBy%3600000)/60000)}m</span>}
     </div>
   );
 }

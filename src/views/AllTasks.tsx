@@ -5,8 +5,9 @@ import { useAppContext } from '../context/AppContext';
 import { useAllOwners } from '../hooks/useAllOwners';
 import { getDeptDelayedInfo } from '../utils';
 import { Pencil, X, ChevronUp, ChevronDown } from 'lucide-react';
+import { calcTaskOverrunMs, getTaskEstHours, msToHrs } from '../utils/productiveHours';
 
-type SortKey = 'intakeDate' | 'title' | 'client' | 'seoOwner' | 'estHours' | 'actualHours' | 'status';
+type SortKey = 'intakeDate' | 'title' | 'client' | 'seoOwner' | 'estHours' | 'actualHours' | 'overrun' | 'status';
 
 function calcActualHours(events: any[]): number {
   let ms = 0; let lastStart: number | null = null;
@@ -141,6 +142,7 @@ export function AllTasks({ tasks }: { tasks: Task[] }) {
       else if (sortKey === 'seoOwner') { av = a.seoOwner; bv = b.seoOwner; }
       else if (sortKey === 'estHours') { av = a.estHoursSEO||a.estHours||0; bv = b.estHoursSEO||b.estHours||0; }
       else if (sortKey === 'actualHours') { av = calcActualHours(a.timeEvents||[]); bv = calcActualHours(b.timeEvents||[]); }
+      else if (sortKey === 'overrun') { av = msToHrs(calcTaskOverrunMs(a.timeEvents||[], getTaskEstHours(a))); bv = msToHrs(calcTaskOverrunMs(b.timeEvents||[], getTaskEstHours(b))); }
       else { av = getTaskStatus(a); bv = getTaskStatus(b); }
       if (av < bv) return sortDir === 'asc' ? -1 : 1;
       if (av > bv) return sortDir === 'asc' ? 1 : -1;
@@ -212,8 +214,8 @@ export function AllTasks({ tasks }: { tasks: Task[] }) {
   );
 
   const exportCSV = () => {
-    const h = ['Task ID','Intake Date','Title','Client','Stage','SEO Owner','Con. Owner','Con. Status','Web Owner','Web Status','Est Hrs','Actual Hrs','Current Owner','Status'];
-    const rows = sorted.map(t => [t.id, t.intakeDate, `"${t.title.replace(/"/g,'""')}"`, t.client, t.seoStage, t.seoOwner, t.contentOwner||'', t.contentStatus||'', t.webOwner||'', t.webStatus||'', t.estHoursSEO||t.estHours||'', calcActualHours(t.timeEvents||[]) || '', t.currentOwner, getTaskStatus(t)].join(','));
+    const h = ['Task ID','Intake Date','Title','Client','Stage','SEO Owner','Con. Owner','Con. Status','Web Owner','Web Status','Est Hrs','Actual Hrs','Overrun','Current Owner','Status'];
+    const rows = sorted.map(t => { const ovH = msToHrs(calcTaskOverrunMs(t.timeEvents||[], getTaskEstHours(t))); return [t.id, t.intakeDate, `"${t.title.replace(/"/g,'""')}"`, t.client, t.seoStage, t.seoOwner, t.contentOwner||'', t.contentStatus||'', t.webOwner||'', t.webStatus||'', t.estHoursSEO||t.estHours||'', calcActualHours(t.timeEvents||[]) || '', ovH>0?ovH.toFixed(1):'', t.currentOwner, getTaskStatus(t)].join(','); });
     const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([[h.join(','), ...rows].join('\n')], {type:'text/csv'}));
     a.download = `all-tasks-${dateFrom||'all'}.csv`; a.click();
   };
@@ -369,6 +371,7 @@ export function AllTasks({ tasks }: { tasks: Task[] }) {
                 <TH style={{ background:'#E1F5EE20', color:'#085041' }}>Web Owner</TH>
                 <TH style={{ background:'#E1F5EE20', color:'#085041' }}>Web Status</TH>
                 <TH sk="actualHours">Actual Hrs</TH>
+                <TH sk="overrun">Overrun</TH>
                 <TH>Curr. Owner</TH>
                 <TH sk="status">Status</TH>
                 <TH>Edit</TH>
@@ -376,7 +379,7 @@ export function AllTasks({ tasks }: { tasks: Task[] }) {
             </thead>
             <tbody>
               {paginated.length === 0 ? (
-                <tr><td colSpan={15} style={{ padding:24, textAlign:'center', color:'var(--color-text-tertiary)', fontSize:12, fontStyle:'italic' }}>No tasks match the current filters</td></tr>
+                <tr><td colSpan={16} style={{ padding:24, textAlign:'center', color:'var(--color-text-tertiary)', fontSize:12, fontStyle:'italic' }}>No tasks match the current filters</td></tr>
               ) : paginated.map(task => {
                 const status = getTaskStatus(task);
                 const delayed = isDelayed(task);
@@ -404,6 +407,7 @@ export function AllTasks({ tasks }: { tasks: Task[] }) {
                       {task.webStatus ? <NeonPill label={task.webStatus === 'Pending QC' ? 'QC Submitted' : task.webStatus} /> : <span style={{ color:'var(--color-text-tertiary)' }}>—</span>}
                     </TD>
                     <TD style={{ textAlign:'center' }}>{fmtHrs(calcActualHours(task.timeEvents || []))}</TD>
+                    <TD style={{ textAlign:'center' }}>{(() => { const ov = msToHrs(calcTaskOverrunMs(task.timeEvents||[], getTaskEstHours(task))); return ov > 0 ? <span style={{ fontSize:10, fontWeight:600, padding:'2px 7px', borderRadius:99, color:'#DC2626', background:'#FEF2F2' }}>+{ov.toFixed(1)}h</span> : <span style={{ color:'var(--color-text-tertiary)' }}>—</span>; })()}</TD>
                     <TD><span style={{ fontSize:10, fontWeight:500, padding:'2px 7px', borderRadius:99, color:deptColor, background:deptBg }}>{task.currentOwner}</span></TD>
                     <TD><NeonPill label={delayed ? 'Delayed' : status} /></TD>
                     <TD>

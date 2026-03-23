@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { useAppContext } from '../context/AppContext';
 import { useAllOwners } from '../hooks/useAllOwners';
 import { ChevronDown, ChevronUp, ChevronRight, X } from 'lucide-react';
+import { calcTaskMs, calcTaskProductiveMs, calcTaskOverrunMs, getTaskEstHours, calcOwnerProductiveHrs, calcOwnerOverrunHrs, fmtMs as pfmtMs, fmtH as pfmtH, msToHrs } from '../utils/productiveHours';
 
 const TARGET_H = 8;
 const STORAGE_KEY = 'seo_leave_records';
@@ -99,24 +100,31 @@ export function Timesheet() {
     });
   };
 
+  // productive hours per owner for range
+  const getOwnerProductiveHrs = (owner: string): number => calcOwnerProductiveHrs(tasks, owner, dateFrom, dateTo);
+  const getOwnerOverrunHrs = (owner: string): number => calcOwnerOverrunHrs(tasks, owner, dateFrom, dateTo);
+
   const ownerSummary = (owner: string) => {
     const workDays = getWorkingDays(owner);
     const targetHrs = workDays.reduce((s, d) => s + d.effectiveHrs, 0);
     const loggedHrs = getOwnerRangeHrs(owner);
-    const shortfall = Math.max(0, targetHrs - loggedHrs);
+    const productiveHrs = getOwnerProductiveHrs(owner);
+    const overrunHrs = getOwnerOverrunHrs(owner);
+    const shortfall = Math.max(0, targetHrs - productiveHrs);
     const leaveDays = workDays.filter(d => d.leaveType !== null).length;
-    const pct = targetHrs > 0 ? Math.round(loggedHrs/targetHrs*100) : 0;
+    const pct = targetHrs > 0 ? Math.round(productiveHrs/targetHrs*100) : 0;
     // per-day breakdown for insights
     const daysLogged = workDays.filter(d => getOwnerDayHrs(owner, d.date) > 0).length;
     const maxDay = workDays.reduce((max, d) => { const h = getOwnerDayHrs(owner, d.date); return h > max.h ? {h, date:d.date} : max; }, {h:0, date:''});
-    return { targetHrs, loggedHrs, shortfall, leaveDays, workDays: workDays.length, pct, daysLogged, maxDay };
+    return { targetHrs, loggedHrs, productiveHrs, overrunHrs, shortfall, leaveDays, workDays: workDays.length, pct, daysLogged, maxDay };
   };
 
-  const cellColor = (logged: number, expected: number, isLeave: boolean) => {
+  // colour-code based on productive (not raw logged)
+  const cellColor = (productive: number, expected: number, isLeave: boolean) => {
     if (isLeave) return { bg:'#E1F5EE', color:'#085041' };
     if (expected === 0) return { bg:'#F1EFE8', color:'#888780' };
-    if (logged === 0) return { bg:'transparent', color:'#ccc' };
-    const pct = logged/expected;
+    if (productive === 0) return { bg:'transparent', color:'#ccc' };
+    const pct = productive/expected;
     if (pct >= 1) return { bg:'#E1F5EE', color:'#085041' };
     if (pct >= 0.75) return { bg:'#EAF3DE', color:'#27500A' };
     if (pct >= 0.5) return { bg:'#FAEEDA', color:'#633806' };
@@ -130,12 +138,14 @@ export function Timesheet() {
   const expandAll = () => setCollapsedOwners(new Set());
 
   const exportCSV = () => {
-    const header = ['Owner','Date','Day','Logged Hrs','Target Hrs','Shortfall','Leave'];
+    const header = ['Owner','Date','Day','Logged Hrs','Productive Hrs','Overrun Hrs','Target Hrs','Shortfall','Leave'];
     const rows: string[] = [];
     visibleOwners.forEach(owner => {
+      const ownerProd = getOwnerProductiveHrs(owner);
+      const ownerOver = getOwnerOverrunHrs(owner);
       getWorkingDays(owner).forEach(wd => {
         const logged = getOwnerDayHrs(owner, wd.date);
-        rows.push([owner, wd.date, dayLabel(wd.date), logged.toFixed(2), wd.effectiveHrs, Math.max(0,wd.effectiveHrs-logged).toFixed(2), wd.leaveType||''].join(','));
+        rows.push([owner, wd.date, dayLabel(wd.date), logged.toFixed(2), ownerProd.toFixed(2), ownerOver.toFixed(2), wd.effectiveHrs, Math.max(0,wd.effectiveHrs-logged).toFixed(2), wd.leaveType||''].join(','));
       });
     });
     const a = document.createElement('a');
@@ -234,7 +244,9 @@ export function Timesheet() {
                         </th>
                       );
                     })}
-                    <th style={{ fontSize:9, fontWeight:600, padding:'6px 8px', background:'#E6F1FB', color:'#0C447C', textAlign:'center', borderBottom:'0.5px solid var(--color-border-tertiary)', borderLeft:'0.5px solid #B5D4F4', minWidth:60, whiteSpace:'nowrap' }}>Total</th>
+                    <th style={{ fontSize:9, fontWeight:600, padding:'6px 8px', background:'#E6F1FB', color:'#0C447C', textAlign:'center', borderBottom:'0.5px solid var(--color-border-tertiary)', borderLeft:'0.5px solid #B5D4F4', minWidth:60, whiteSpace:'nowrap' }}>Logged</th>
+                    <th style={{ fontSize:9, fontWeight:600, padding:'6px 8px', background:'#E1F5EE', color:'#085041', textAlign:'center', borderBottom:'0.5px solid var(--color-border-tertiary)', borderLeft:'0.5px solid #9FE1CB', minWidth:66, whiteSpace:'nowrap' }}>Productive</th>
+                    <th style={{ fontSize:9, fontWeight:600, padding:'6px 8px', background:'#FCEBEB', color:'#791F1F', textAlign:'center', borderBottom:'0.5px solid var(--color-border-tertiary)', borderLeft:'0.5px solid #F7C1C1', minWidth:60, whiteSpace:'nowrap' }}>Overrun</th>
                     <th style={{ fontSize:9, fontWeight:600, padding:'6px 8px', background:'#E6F1FB', color:'#0C447C', textAlign:'center', borderBottom:'0.5px solid var(--color-border-tertiary)', borderLeft:'0.5px solid #B5D4F4', minWidth:60, whiteSpace:'nowrap' }}>Target</th>
                     <th style={{ fontSize:9, fontWeight:600, padding:'6px 8px', background:'#FCEBEB', color:'#791F1F', textAlign:'center', borderBottom:'0.5px solid var(--color-border-tertiary)', borderLeft:'0.5px solid #F7C1C1', minWidth:70, whiteSpace:'nowrap' }}>Shortfall</th>
                   </tr>
@@ -242,7 +254,7 @@ export function Timesheet() {
                 <tbody>
                   {visibleOwners.map(owner => {
                     const workDays = getWorkingDays(owner);
-                    const { targetHrs, loggedHrs, shortfall } = ownerSummary(owner);
+                    const { targetHrs, loggedHrs, productiveHrs, overrunHrs, shortfall } = ownerSummary(owner);
                     const ownerTasks = tasks.filter(t => (t.seoOwner===owner||t.contentOwner===owner||t.webOwner===owner||t.assignedTo===owner) && (t.timeEvents||[]).some((e:any) => {
                       const ds = e.timestamp.split('T')[0]; return ds>=dateFrom && ds<=dateTo;
                     }));
@@ -263,6 +275,7 @@ export function Timesheet() {
                             const isWknd = isWeekend(ds); const lv = wd?.leaveType;
                             const logged = getOwnerDayHrs(owner, ds);
                             const expected = wd?.effectiveHrs ?? (isWknd?0:TARGET_H);
+                            // colour-code on productive (= logged capped by est across owner tasks for this day)
                             const cc = cellColor(logged, expected, !!lv);
                             return (
                               <td key={ds} style={{ textAlign:'center', padding:'6px 4px', borderBottom:'0.5px solid var(--color-border-tertiary)', borderLeft:'0.5px solid var(--color-border-tertiary)', background:isWknd?'#F8F8F6':cc.bg, color:cc.color, fontSize:10, fontWeight:500, minWidth:52 }}>
@@ -271,6 +284,10 @@ export function Timesheet() {
                             );
                           })}
                           <td style={{ textAlign:'center', padding:'6px 8px', borderBottom:'0.5px solid var(--color-border-tertiary)', borderLeft:'0.5px solid #B5D4F4', fontSize:11, fontWeight:600, color:'#0C447C', background:'#E6F1FB20' }}>{fmtH(loggedHrs)}</td>
+                          <td style={{ textAlign:'center', padding:'6px 8px', borderBottom:'0.5px solid var(--color-border-tertiary)', borderLeft:'0.5px solid #9FE1CB', fontSize:11, fontWeight:600, color:'#085041', background:'#E1F5EE20' }}>{fmtH(productiveHrs)}</td>
+                          <td style={{ textAlign:'center', padding:'6px 8px', borderBottom:'0.5px solid var(--color-border-tertiary)', borderLeft:'0.5px solid #F7C1C1', fontSize:11, fontWeight:600, color:overrunHrs>0?'#DC2626':'#059669', background:overrunHrs>0?'#FEF2F220':'transparent' }}>
+                            {overrunHrs > 0.01 ? `+${fmtH(overrunHrs)}` : '—'}
+                          </td>
                           <td style={{ textAlign:'center', padding:'6px 8px', borderBottom:'0.5px solid var(--color-border-tertiary)', borderLeft:'0.5px solid #B5D4F4', fontSize:11, color:'var(--color-text-secondary)', background:'#E6F1FB20' }}>{fmtH(targetHrs)}</td>
                           <td style={{ textAlign:'center', padding:'6px 8px', borderBottom:'0.5px solid var(--color-border-tertiary)', borderLeft:'0.5px solid #F7C1C1', fontSize:11, fontWeight:600, color:shortfall>0?'#DC2626':'#059669', background:shortfall>0?'#FEF2F220':'#ECFDF520' }}>
                             {shortfall>0.05 ? `-${fmtH(shortfall)}` : '✓'}
@@ -283,6 +300,9 @@ export function Timesheet() {
                           const dept = task.seoOwner===owner?'SEO':task.contentOwner===owner?'Con':task.webOwner===owner?'Web':'Hub';
                           const deptColor = dept==='SEO'?'#185FA5':dept==='Con'?'#BA7517':dept==='Web'?'#1D9E75':'#9D174D';
                           const deptBg = dept==='SEO'?'#E6F1FB':dept==='Con'?'#FAEEDA':dept==='Web'?'#E1F5EE':'#FDF2F8';
+                          const tEst = getTaskEstHours(task);
+                          const tProdMs = calcTaskProductiveMs(task.timeEvents, tEst, dateFrom, dateTo);
+                          const tOverMs = calcTaskOverrunMs(task.timeEvents, tEst, dateFrom, dateTo);
                           return (
                             <tr key={task.id} className="hover:brightness-95">
                               <td style={{ fontSize:11, padding:'5px 12px 5px 28px', borderBottom:'0.5px solid var(--color-border-tertiary)', color:'var(--color-text-secondary)', position:'sticky', left:0, background:'var(--color-background-primary)', zIndex:1 }}>
@@ -290,7 +310,7 @@ export function Timesheet() {
                                   <span style={{ fontSize:9, fontWeight:600, padding:'1px 5px', borderRadius:99, color:deptColor, background:deptBg, flexShrink:0 }}>{dept}</span>
                                   <span style={{ overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', maxWidth:150 }} title={task.title}>{task.title}</span>
                                 </div>
-                                <div style={{ fontSize:9, color:'var(--color-text-tertiary)', marginTop:1 }}>{task.client} · {task.id} · Est: {task.estHoursSEO||task.estHours||0}h</div>
+                                <div style={{ fontSize:9, color:'var(--color-text-tertiary)', marginTop:1 }}>{task.client} · {task.id}</div>
                               </td>
                               {visibleDates.map(ds => {
                                 const dayMs = getTaskDayMs(task, ds);
@@ -300,8 +320,16 @@ export function Timesheet() {
                                   </td>
                                 );
                               })}
+                              {/* Logged */}
                               <td style={{ textAlign:'center', padding:'5px 8px', borderBottom:'0.5px solid var(--color-border-tertiary)', borderLeft:'0.5px solid #B5D4F4', fontSize:10, fontWeight:500, color:'#0C447C' }}>{fmtMs(taskTotalMs)}</td>
-                              <td style={{ textAlign:'center', padding:'5px 8px', borderBottom:'0.5px solid var(--color-border-tertiary)', borderLeft:'0.5px solid #B5D4F4', fontSize:10, color:'var(--color-text-tertiary)' }}>{task.estHoursSEO||task.estHours||0}h</td>
+                              {/* Productive */}
+                              <td style={{ textAlign:'center', padding:'5px 8px', borderBottom:'0.5px solid var(--color-border-tertiary)', borderLeft:'0.5px solid #9FE1CB', fontSize:10, fontWeight:500, color:'#085041' }}>{pfmtMs(tProdMs)}</td>
+                              {/* Overrun */}
+                              <td style={{ textAlign:'center', padding:'5px 8px', borderBottom:'0.5px solid var(--color-border-tertiary)', borderLeft:'0.5px solid #F7C1C1', fontSize:10, fontWeight:500, color:tOverMs>0?'#DC2626':'var(--color-text-tertiary)' }}>
+                                {tOverMs > 0 ? <span style={{ padding:'1px 6px', borderRadius:99, background:'#FEF2F2', color:'#DC2626', border:'1px solid #DC262630' }}>+{pfmtMs(tOverMs)}</span> : '—'}
+                              </td>
+                              {/* Target (est) */}
+                              <td style={{ textAlign:'center', padding:'5px 8px', borderBottom:'0.5px solid var(--color-border-tertiary)', borderLeft:'0.5px solid #B5D4F4', fontSize:10, color:'var(--color-text-tertiary)' }}>{tEst > 0 ? `${tEst}h` : '—'}</td>
                               <td style={{ padding:'5px 8px', borderBottom:'0.5px solid var(--color-border-tertiary)', borderLeft:'0.5px solid #F7C1C1' }}/>
                             </tr>
                           );
@@ -323,23 +351,28 @@ export function Timesheet() {
           {(() => {
             const allData = allOwners.map(o => ({ owner:o, ...ownerSummary(o) }));
             const belowTarget = allData.filter(o => o.shortfall > 0.1);
-            const onTrack = allData.filter(o => o.shortfall <= 0.1 && o.loggedHrs > 0);
+            const onTrack = allData.filter(o => o.shortfall <= 0.1 && o.productiveHrs > 0);
             const noTime = allData.filter(o => o.loggedHrs === 0);
-            const totalLogged = allData.reduce((s,o)=>s+o.loggedHrs,0);
+            const hasOverrun = allData.filter(o => o.overrunHrs > 0.01);
+            const totalProductive = allData.reduce((s,o)=>s+o.productiveHrs,0);
+            const totalOverrun = allData.reduce((s,o)=>s+o.overrunHrs,0);
             const totalTarget = allData.reduce((s,o)=>s+o.targetHrs,0);
             const totalShortfall = allData.reduce((s,o)=>s+o.shortfall,0);
             return (
               <div style={{ background:'var(--color-background-primary)', border:'0.5px solid var(--color-border-tertiary)', borderRadius:10, padding:'10px 14px' }}>
                 <p style={{ fontSize:9, fontWeight:600, color:'var(--color-text-tertiary)', textTransform:'uppercase', letterSpacing:'.05em', marginBottom:8 }}>Period insights — {dateFrom} to {dateTo}</p>
                 <div style={{ display:'flex', flexWrap:'wrap', gap:6 }}>
-                  <span style={{ display:'inline-flex', alignItems:'center', gap:5, padding:'5px 11px', borderRadius:99, fontSize:11, fontWeight:500, color:'#0C447C', background:'#E6F1FB', border:'1px solid #185FA540' }}>
-                    🕐 {fmtH(totalLogged)} logged of {fmtH(totalTarget)} target
+                  <span style={{ display:'inline-flex', alignItems:'center', gap:5, padding:'5px 11px', borderRadius:99, fontSize:11, fontWeight:500, color:'#085041', background:'#E1F5EE', border:'1px solid #05966940' }}>
+                    ✓ {fmtH(totalProductive)} productive of {fmtH(totalTarget)} target
                   </span>
-                  {totalShortfall > 0 && <span style={{ display:'inline-flex', alignItems:'center', gap:5, padding:'5px 11px', borderRadius:99, fontSize:11, fontWeight:500, color:'#791F1F', background:'#FCEBEB', border:'1px solid #DC262640' }}>
-                    ⚠ {fmtH(totalShortfall)} total shortfall
+                  {totalOverrun > 0.01 && <span style={{ display:'inline-flex', alignItems:'center', gap:5, padding:'5px 11px', borderRadius:99, fontSize:11, fontWeight:500, color:totalOverrun>1?'#DC2626':'#D97706', background:totalOverrun>1?'#FEF2F2':'#FFFBEB', border:`1px solid ${totalOverrun>1?'#DC262640':'#D9770640'}` }}>
+                    ⚠ {fmtH(totalOverrun)} total overrun
                   </span>}
-                  {belowTarget.length > 0 && <span style={{ display:'inline-flex', alignItems:'center', gap:5, padding:'5px 11px', borderRadius:99, fontSize:11, fontWeight:500, color:'#DC2626', background:'#FEF2F2', border:'1px solid #DC262640' }}>
-                    ↓ {belowTarget.length} below target: {belowTarget.map(o=>o.owner).join(', ')}
+                  {totalShortfall > 0 && <span style={{ display:'inline-flex', alignItems:'center', gap:5, padding:'5px 11px', borderRadius:99, fontSize:11, fontWeight:500, color:'#791F1F', background:'#FCEBEB', border:'1px solid #DC262640' }}>
+                    ↓ {fmtH(totalShortfall)} total shortfall
+                  </span>}
+                  {hasOverrun.length > 0 && <span style={{ display:'inline-flex', alignItems:'center', gap:5, padding:'5px 11px', borderRadius:99, fontSize:11, fontWeight:500, color:'#DC2626', background:'#FEF2F2', border:'1px solid #DC262640' }}>
+                    ⚠ {hasOverrun.length} with overruns: {hasOverrun.map(o=>o.owner).join(', ')}
                   </span>}
                   {onTrack.length > 0 && <span style={{ display:'inline-flex', alignItems:'center', gap:5, padding:'5px 11px', borderRadius:99, fontSize:11, fontWeight:500, color:'#059669', background:'#ECFDF5', border:'1px solid #05966940' }}>
                     ✓ {onTrack.length} on track: {onTrack.map(o=>o.owner).join(', ')}
@@ -355,9 +388,10 @@ export function Timesheet() {
           {/* Owner cards grid */}
           <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(260px,1fr))', gap:12 }}>
             {visibleOwners.map(owner => {
-              const { targetHrs, loggedHrs, shortfall, leaveDays, workDays, pct, daysLogged, maxDay } = ownerSummary(owner);
+              const { targetHrs, loggedHrs, productiveHrs, overrunHrs, shortfall, leaveDays, workDays, pct, daysLogged, maxDay } = ownerSummary(owner);
               const hasShortfall = shortfall > 0.1;
-              const barColor = pct>=100?'#059669':pct>=75?'#639922':pct>=50?'#BA7517':'#DC2626';
+              const prodPct = targetHrs>0?Math.round(productiveHrs/targetHrs*100):0;
+              const barColor = prodPct>=100?'#059669':prodPct>=75?'#639922':prodPct>=50?'#BA7517':'#DC2626';
               const ownerTasks = tasks.filter(t => (t.seoOwner===owner||t.contentOwner===owner||t.webOwner===owner||t.assignedTo===owner) && (t.timeEvents||[]).some((e:any) => { const ds=e.timestamp.split('T')[0]; return ds>=dateFrom&&ds<=dateTo; }));
               return (
                 <div key={owner} style={{ background:'var(--color-background-primary)', border:`1px solid ${hasShortfall?'#DC262640':'var(--color-border-tertiary)'}`, borderRadius:12, padding:14, display:'flex', flexDirection:'column', gap:8 }}>
@@ -372,18 +406,18 @@ export function Timesheet() {
                     {leaveDays > 0 && <span style={{ fontSize:9, fontWeight:600, padding:'2px 7px', borderRadius:99, color:'#085041', background:'#E1F5EE' }}>{leaveDays}d leave</span>}
                   </div>
 
-                  {/* Logged vs target */}
+                  {/* Productive vs target */}
                   <div>
                     <div style={{ display:'flex', alignItems:'baseline', gap:6, marginBottom:4 }}>
-                      <span style={{ fontSize:22, fontWeight:600, color:hasShortfall?'#DC2626':'#059669', lineHeight:1 }}>{fmtH(loggedHrs)}</span>
-                      <span style={{ fontSize:11, color:'var(--color-text-tertiary)' }}>/ {fmtH(targetHrs)} target</span>
+                      <span style={{ fontSize:22, fontWeight:600, color:hasShortfall?'#DC2626':'#059669', lineHeight:1 }}>{pfmtH(productiveHrs)}</span>
+                      <span style={{ fontSize:11, color:'var(--color-text-tertiary)' }}>productive / {fmtH(targetHrs)} target</span>
                     </div>
                     <div style={{ height:5, background:'var(--color-background-secondary)', borderRadius:3, overflow:'hidden', marginBottom:4 }}>
-                      <div style={{ height:'100%', width:`${Math.min(100,pct)}%`, background:barColor, borderRadius:3, transition:'width .3s' }} />
+                      <div style={{ height:'100%', width:`${Math.min(100,prodPct)}%`, background:barColor, borderRadius:3, transition:'width .3s' }} />
                     </div>
                     <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
-                      <span style={{ fontSize:10, color:'var(--color-text-tertiary)' }}>{pct}% utilised</span>
-                      <span style={{ fontSize:10, color:'var(--color-text-tertiary)' }}>{workDays} working days</span>
+                      <span style={{ fontSize:10, color:'var(--color-text-tertiary)' }}>{fmtH(loggedHrs)} logged</span>
+                      {overrunHrs > 0.01 && <span style={{ fontSize:10, fontWeight:500, color:overrunHrs>1?'#DC2626':'#D97706' }}>{pfmtH(overrunHrs)} overrun</span>}
                       {hasShortfall && <span style={{ fontSize:10, fontWeight:500, color:'#DC2626' }}>Shortfall: {fmtH(shortfall)}</span>}
                     </div>
                   </div>
@@ -393,7 +427,7 @@ export function Timesheet() {
                     <span style={{ fontSize:9, fontWeight:500, padding:'2px 7px', borderRadius:99, color:'#0C447C', background:'#E6F1FB' }}>{daysLogged}/{workDays} days logged</span>
                     {ownerTasks.length > 0 && <span style={{ fontSize:9, fontWeight:500, padding:'2px 7px', borderRadius:99, color:'#7C3AED', background:'#F5F3FF' }}>{ownerTasks.length} task{ownerTasks.length!==1?'s':''}</span>}
                     {maxDay.h > 0 && <span style={{ fontSize:9, fontWeight:500, padding:'2px 7px', borderRadius:99, color:'#065F46', background:'#ECFDF5' }}>Best day: {fmtH(maxDay.h)} on {maxDay.date.slice(5)}</span>}
-                    {!hasShortfall && loggedHrs > 0 && <span style={{ fontSize:9, fontWeight:500, padding:'2px 7px', borderRadius:99, color:'#059669', background:'#ECFDF5' }}>✓ On track</span>}
+                    {!hasShortfall && productiveHrs > 0 && <span style={{ fontSize:9, fontWeight:500, padding:'2px 7px', borderRadius:99, color:'#059669', background:'#ECFDF5' }}>✓ On track</span>}
                   </div>
 
                   {/* Task list inside card */}
@@ -402,14 +436,19 @@ export function Timesheet() {
                       <p style={{ fontSize:9, fontWeight:600, color:'var(--color-text-tertiary)', textTransform:'uppercase', letterSpacing:'.04em', marginBottom:5 }}>Tasks logged</p>
                       <div style={{ display:'flex', flexDirection:'column', gap:3 }}>
                         {ownerTasks.slice(0,4).map(t => {
-                          const ms = visibleDates.reduce((s,ds)=>s+getTaskDayMs(t,ds),0);
+                          const rawMs = calcTaskMs(t.timeEvents||[], dateFrom, dateTo);
+                          const estH = getTaskEstHours(t);
+                          const prodMs = calcTaskProductiveMs(t.timeEvents||[], estH, dateFrom, dateTo);
+                          const overMs = calcTaskOverrunMs(t.timeEvents||[], estH, dateFrom, dateTo);
                           const dept = t.seoOwner===owner?'SEO':t.contentOwner===owner?'Con':t.webOwner===owner?'Web':'Hub';
                           const dc = {SEO:{c:'#185FA5',bg:'#E6F1FB'},Con:{c:'#BA7517',bg:'#FAEEDA'},Web:{c:'#1D9E75',bg:'#E1F5EE'},Hub:{c:'#9D174D',bg:'#FDF2F8'}}[dept];
                           return (
                             <div key={t.id} style={{ display:'flex', alignItems:'center', gap:6, fontSize:10 }}>
                               <span style={{ fontSize:8, fontWeight:600, padding:'1px 4px', borderRadius:99, color:dc?.c, background:dc?.bg, flexShrink:0 }}>{dept}</span>
                               <span style={{ flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', color:'var(--color-text-secondary)' }}>{t.title}</span>
-                              <span style={{ fontWeight:500, color:'#0C447C', flexShrink:0 }}>{fmtMs(ms)}</span>
+                              {estH > 0 && <span style={{ fontSize:9, color:'var(--color-text-tertiary)', flexShrink:0 }}>Est {pfmtH(estH)}</span>}
+                              <span style={{ fontWeight:500, color:'#0C447C', flexShrink:0 }}>{pfmtMs(prodMs)}</span>
+                              {overMs > 0 && <span style={{ fontSize:8, fontWeight:600, padding:'1px 5px', borderRadius:99, color:'#DC2626', background:'#FEF2F2', flexShrink:0 }}>exceeded</span>}
                             </div>
                           );
                         })}
