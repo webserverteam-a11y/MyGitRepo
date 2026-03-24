@@ -267,7 +267,7 @@ export function ActionView() {
               ...updatedReworkEntries.slice(0, -1),
               { ...latest, startTimestamp: now }
             ];
-            events.push({ type: 'rework_start', timestamp: now, department: t.currentOwner });
+            events.push({ type: 'rework_start', timestamp: now, department: t.currentOwner, owner: currentUser?.ownerName || '' });
             // State becomes Rework (not In Progress) so timer tracks rework time
             return {
               ...t,
@@ -278,7 +278,7 @@ export function ActionView() {
           }
         }
         // Normal start — no pending rework entry
-        events.push({ type, timestamp: now, department: t.currentOwner });
+        events.push({ type, timestamp: now, department: t.currentOwner, owner: currentUser?.ownerName || '' });
         return { ...t, executionState: newState, timeEvents: events, reworkEntries: updatedReworkEntries };
       }
 
@@ -295,7 +295,7 @@ export function ActionView() {
         }
       }
 
-      events.push({ type, timestamp: now, department: t.currentOwner });
+      events.push({ type, timestamp: now, department: t.currentOwner, owner: currentUser?.ownerName || '' });
       return { ...t, executionState: newState, timeEvents: events, reworkEntries: updatedReworkEntries };
     }));
   };
@@ -321,7 +321,7 @@ export function ActionView() {
       if (t.id !== endingTask.id) return t;
       const updated = { ...t };
       const nowTs = new Date().toISOString();
-      updated.timeEvents = [...(t.timeEvents || []), { type: 'end' as TimeEvent['type'], timestamp: nowTs, department: t.currentOwner }];
+      updated.timeEvents = [...(t.timeEvents || []), { type: 'end' as TimeEvent['type'], timestamp: nowTs, department: t.currentOwner, owner: currentUser?.ownerName || '' }];
       if (docUrl) updated.docUrl = docUrl;
       // Close any open rework entry that has actually started
       if (t.reworkEntries && t.reworkEntries.length > 0) {
@@ -382,7 +382,7 @@ export function ActionView() {
       const events = [...(t.timeEvents || [])];
       // Auto-pause if still running — closes the SEO review time cleanly
       if (t.executionState === 'In Progress') {
-        events.push({ type: 'pause', timestamp: new Date().toISOString(), department: t.currentOwner });
+        events.push({ type: 'pause', timestamp: new Date().toISOString(), department: t.currentOwner, owner: currentUser?.ownerName || '' });
       }
       // NOTE: NO rework_start event here — that happens when the assignee clicks Start Task
       return {

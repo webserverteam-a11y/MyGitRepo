@@ -69,8 +69,14 @@ interface AppContextType {
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
-  const [tasks, setTasks] = useState<Task[]>(mockTasks);
-  const [adminOptions, setAdminOptions] = useState<AdminOptions>(defaultAdminOptions);
+  const [tasks, setTasks] = useState<Task[]>(() => {
+    try { const s = localStorage.getItem('seo_tasks'); if (s) { const p = JSON.parse(s); if (Array.isArray(p) && p.length) return p; } } catch {}
+    return mockTasks;
+  });
+  const [adminOptions, setAdminOptions] = useState<AdminOptions>(() => {
+    try { const s = localStorage.getItem('seo_admin_options'); if (s) { const p = JSON.parse(s); return { ...defaultAdminOptions, ...p }; } } catch {}
+    return defaultAdminOptions;
+  });
   const [users, setUsers] = useState<AppUser[]>(defaultUsers);
   const [currentUser, setCurrentUser] = useState<AppUser | null>(() => {
     try { const s = localStorage.getItem('seo_current_user'); return s ? JSON.parse(s) : null; } catch { return null; }
@@ -147,7 +153,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!apiLoaded.current) return;
     clearTimeout(taskTimer.current);
-    taskTimer.current = setTimeout(() => { saveTasksToApi(tasks); taskTimer.current = undefined; }, 150);
+    taskTimer.current = setTimeout(() => { saveTasksToApi(tasks); try { localStorage.setItem('seo_tasks', JSON.stringify(tasks)); } catch {} taskTimer.current = undefined; }, 150);
     return () => clearTimeout(taskTimer.current);
   }, [tasks]);
 
@@ -155,7 +161,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!apiLoaded.current) return;
     clearTimeout(optionsTimer.current);
-    optionsTimer.current = setTimeout(() => { saveConfigToApi('admin_options', adminOptions); optionsTimer.current = undefined; }, 150);
+    optionsTimer.current = setTimeout(() => { saveConfigToApi('admin_options', adminOptions); try { localStorage.setItem('seo_admin_options', JSON.stringify(adminOptions)); } catch {} optionsTimer.current = undefined; }, 150);
     return () => clearTimeout(optionsTimer.current);
   }, [adminOptions]);
 

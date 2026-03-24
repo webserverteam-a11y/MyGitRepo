@@ -5,7 +5,7 @@ import { useAppContext } from '../context/AppContext';
 import { useAllOwners } from '../hooks/useAllOwners';
 import { getDeptDelayedInfo } from '../utils';
 import { Pencil, X, ChevronUp, ChevronDown } from 'lucide-react';
-import { calcTaskOverrunMs, getTaskEstHours, msToHrs } from '../utils/productiveHours';
+import { calcTaskOverrunMsLegacy as calcTaskOverrunMs, getTaskEstHours, msToHrs } from '../utils/productiveHours';
 
 type SortKey = 'intakeDate' | 'title' | 'client' | 'seoOwner' | 'estHours' | 'actualHours' | 'overrun' | 'status';
 

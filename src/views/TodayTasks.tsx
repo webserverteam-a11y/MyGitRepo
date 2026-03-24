@@ -386,13 +386,13 @@ export function TodayTasks({ tasks: propTasks }: { tasks: Task[] }) {
           const latest = updatedReworkEntries[updatedReworkEntries.length - 1];
           if (!latest.startTimestamp || latest.startTimestamp === '') {
             updatedReworkEntries = [...updatedReworkEntries.slice(0, -1), { ...latest, startTimestamp: now }];
-            events.push({ type: 'rework_start' as any, timestamp: now, department: t.currentOwner });
+            events.push({ type: 'rework_start' as any, timestamp: now, department: t.currentOwner, owner: currentUser?.ownerName || '' });
             return { ...t, executionState: 'Rework' as any, isCompleted: false, timeEvents: events, reworkEntries: updatedReworkEntries };
           }
         }
-        events.push({ type: prevState === 'Paused' ? 'resume' : 'start' as any, timestamp: now, department: t.currentOwner });
+        events.push({ type: prevState === 'Paused' ? 'resume' : 'start' as any, timestamp: now, department: t.currentOwner, owner: currentUser?.ownerName || '' });
       } else if (newState === 'Paused' && prevState === 'In Progress') {
-        events.push({ type: 'pause' as any, timestamp: now, department: t.currentOwner });
+        events.push({ type: 'pause' as any, timestamp: now, department: t.currentOwner, owner: currentUser?.ownerName || '' });
       } else if (newState === 'Ended') {
         if (updatedReworkEntries && updatedReworkEntries.length > 0) {
           const latest = updatedReworkEntries[updatedReworkEntries.length - 1];
@@ -401,7 +401,7 @@ export function TodayTasks({ tasks: propTasks }: { tasks: Task[] }) {
             updatedReworkEntries = [...updatedReworkEntries.slice(0, -1), { ...latest, endTimestamp: now, durationMs }];
           }
         }
-        events.push({ type: 'end' as any, timestamp: now, department: t.currentOwner });
+        events.push({ type: 'end' as any, timestamp: now, department: t.currentOwner, owner: currentUser?.ownerName || '' });
       }
       return { ...t, executionState: newState as any, isCompleted, timeEvents: events, reworkEntries: updatedReworkEntries };
     }));

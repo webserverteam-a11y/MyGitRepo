@@ -1,30 +1,19 @@
 import { Task, TimeEvent } from '../types';
 
-/**
- * Core productive hours logic:
- *   productive = min(actual logged ms, est hours × 3600000)
- *   overrun    = max(0, actual logged ms - est hours × 3600000)
- *   No est set → all logged = productive, overrun = 0
- *   Rework time included in actual — cap handles it automatically
- */
-
 // ── Raw ms from timeEvents (optionally within a date range) ──────────
-export function calcTaskMs(
+export function calcTaskRawMs(
   timeEvents: TimeEvent[] | undefined,
   dateFrom?: string,
   dateTo?: string,
 ): number {
   if (!timeEvents || timeEvents.length === 0) return 0;
-
   let ms = 0;
   let lastStart: number | null = null;
-
   for (const e of timeEvents) {
     const ts = new Date(e.timestamp).getTime();
     if (e.type === 'start' || e.type === 'resume' || e.type === 'rework_start') {
       lastStart = ts;
     } else if ((e.type === 'pause' || e.type === 'end') && lastStart !== null) {
-      // If range filtering, clip the interval
       if (dateFrom || dateTo) {
         const rangeStart = dateFrom ? new Date(dateFrom).getTime() : 0;
         const rangeEnd = dateTo ? new Date(dateTo + 'T23:59:59.999Z').getTime() : Infinity;
@@ -40,66 +29,137 @@ export function calcTaskMs(
   return ms;
 }
 
-// ── Productive ms = min(actual, est) ─────────────────────────────────
-export function calcTaskProductiveMs(
+// Keep old name as alias for backward compat
+export const calcTaskMs = calcTaskRawMs;
+
+// ── Legacy wrappers (old signature: timeEvents, estHours) ────────────
+export function calcTaskProductiveMsLegacy(
   timeEvents: TimeEvent[] | undefined,
   estHours: number,
   dateFrom?: string,
   dateTo?: string,
 ): number {
-  const actualMs = calcTaskMs(timeEvents, dateFrom, dateTo);
-  if (!estHours || estHours <= 0) return actualMs; // no est → all productive
+  const actualMs = calcTaskRawMs(timeEvents, dateFrom, dateTo);
+  if (!estHours || estHours <= 0) return actualMs;
   return Math.min(actualMs, estHours * 3600000);
 }
 
-// ── Overrun ms = max(0, actual − est) ────────────────────────────────
-export function calcTaskOverrunMs(
+export function calcTaskOverrunMsLegacy(
   timeEvents: TimeEvent[] | undefined,
   estHours: number,
   dateFrom?: string,
   dateTo?: string,
 ): number {
-  if (!estHours || estHours <= 0) return 0; // no est → no overrun
-  const actualMs = calcTaskMs(timeEvents, dateFrom, dateTo);
+  if (!estHours || estHours <= 0) return 0;
+  const actualMs = calcTaskRawMs(timeEvents, dateFrom, dateTo);
   return Math.max(0, actualMs - estHours * 3600000);
 }
 
-// ── Get combined est hours for a task (all depts) ────────────────────
+// ── Owner-specific ms (uses owner stamp if available, falls back to role match) ──
+export function calcTaskOwnerMs(
+  task: Task,
+  ownerName: string,
+  dateFrom?: string,
+  dateTo?: string,
+): number {
+  const events = task.timeEvents || [];
+  if (events.length === 0) return 0;
+
+  const hasOwnerStamp = events.some(e => !!e.owner);
+
+  if (hasOwnerStamp) {
+    const ownerEvents = events.filter(e => e.owner === ownerName);
+    return calcTaskRawMs(ownerEvents, dateFrom, dateTo);
+  }
+
+  // Fallback for old un-stamped events: if owner matches any role field → all time
+  if (
+    task.seoOwner === ownerName ||
+    task.contentOwner === ownerName ||
+    task.webOwner === ownerName ||
+    task.assignedTo === ownerName
+  ) {
+    return calcTaskRawMs(events, dateFrom, dateTo);
+  }
+  return 0;
+}
+
+// ── Owner-specific est hours ─────────────────────────────────────────
+export function calcOwnerEstHrs(task: Task, ownerName: string): number {
+  if (task.deptType && task.deptType !== 'SEO') return task.estHours || 0;
+  if (task.contentOwner === ownerName) return task.estHoursContent || 0;
+  if (task.webOwner === ownerName) return task.estHoursWeb || 0;
+  if (task.seoOwner === ownerName) return task.estHoursSEO || task.estHours || 0;
+  return task.estHours || 0;
+}
+
+// ── Productive ms = min(owner ms, est ms) ────────────────────────────
+export function calcTaskProductiveMs(
+  task: Task,
+  ownerName: string,
+  dateFrom?: string,
+  dateTo?: string,
+): number {
+  const ownerMs = calcTaskOwnerMs(task, ownerName, dateFrom, dateTo);
+  const estMs = calcOwnerEstHrs(task, ownerName) * 3600000;
+  if (estMs <= 0) return ownerMs;
+  return Math.min(ownerMs, estMs);
+}
+
+// ── Overrun ms = max(0, owner ms − est ms) ───────────────────────────
+export function calcTaskOverrunMs(
+  task: Task,
+  ownerName: string,
+  dateFrom?: string,
+  dateTo?: string,
+): number {
+  const ownerMs = calcTaskOwnerMs(task, ownerName, dateFrom, dateTo);
+  const estMs = calcOwnerEstHrs(task, ownerName) * 3600000;
+  if (estMs <= 0) return 0;
+  return Math.max(0, ownerMs - estMs);
+}
+
+// ── Get combined est hours for a task (all depts) — legacy compat ────
 export function getTaskEstHours(t: Task): number {
   return (t.estHoursSEO || t.estHours || 0) + (t.estHoursContent || 0) + (t.estHoursWeb || 0);
 }
 
-// ── Owner-level aggregation (sum across tasks) ───────────────────────
-export function calcOwnerProductiveHrs(
+// ── Owner totals across tasks ────────────────────────────────────────
+export function calcOwnerTotals(
   tasks: Task[],
-  owner: string,
+  ownerName: string,
   dateFrom?: string,
   dateTo?: string,
-): number {
-  let totalMs = 0;
+): { loggedMs: number; productiveMs: number; overrunMs: number } {
+  let loggedMs = 0, productiveMs = 0, overrunMs = 0;
   for (const t of tasks) {
-    if (t.seoOwner !== owner && t.contentOwner !== owner && t.webOwner !== owner && t.assignedTo !== owner)
-      continue;
-    const est = getTaskEstHours(t);
-    totalMs += calcTaskProductiveMs(t.timeEvents, est, dateFrom, dateTo);
+    if (
+      t.seoOwner !== ownerName &&
+      t.contentOwner !== ownerName &&
+      t.webOwner !== ownerName &&
+      t.assignedTo !== ownerName
+    ) continue;
+    loggedMs += calcTaskOwnerMs(t, ownerName, dateFrom, dateTo);
+    productiveMs += calcTaskProductiveMs(t, ownerName, dateFrom, dateTo);
+    overrunMs += calcTaskOverrunMs(t, ownerName, dateFrom, dateTo);
   }
-  return totalMs / 3600000;
+  return { loggedMs, productiveMs, overrunMs };
 }
 
-export function calcOwnerOverrunHrs(
-  tasks: Task[],
-  owner: string,
-  dateFrom?: string,
-  dateTo?: string,
-): number {
-  let totalMs = 0;
-  for (const t of tasks) {
-    if (t.seoOwner !== owner && t.contentOwner !== owner && t.webOwner !== owner && t.assignedTo !== owner)
-      continue;
-    const est = getTaskEstHours(t);
-    totalMs += calcTaskOverrunMs(t.timeEvents, est, dateFrom, dateTo);
-  }
-  return totalMs / 3600000;
+// Backward compat wrappers
+export function calcOwnerProductiveHrs(tasks: Task[], owner: string, dateFrom?: string, dateTo?: string): number {
+  return calcOwnerTotals(tasks, owner, dateFrom, dateTo).productiveMs / 3600000;
+}
+export function calcOwnerOverrunHrs(tasks: Task[], owner: string, dateFrom?: string, dateTo?: string): number {
+  return calcOwnerTotals(tasks, owner, dateFrom, dateTo).overrunMs / 3600000;
+}
+
+// ── Dept label for an owner on a task ────────────────────────────────
+export function getOwnerDeptLabel(task: Task, ownerName: string): string {
+  if (task.deptType && task.deptType !== 'SEO') return task.deptType;
+  if (task.contentOwner === ownerName) return 'Content';
+  if (task.webOwner === ownerName) return 'Web';
+  return 'SEO';
 }
 
 // ── Formatting helpers ───────────────────────────────────────────────
@@ -116,6 +176,8 @@ export function fmtH(h: number): string {
   const mm = Math.round((h - hh) * 60);
   return hh > 0 ? `${hh}h ${String(mm).padStart(2, '0')}m` : `${mm}m`;
 }
+
+export function fmtHrs(h: number): string { return fmtH(h); }
 
 export function msToHrs(ms: number): number {
   return Math.round((ms / 3600000) * 100) / 100;

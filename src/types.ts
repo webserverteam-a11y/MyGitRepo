@@ -35,6 +35,7 @@ export interface TimeEvent {
   type: 'start' | 'pause' | 'resume' | 'rework_start' | 'end';
   timestamp: string;
   department: string;
+  owner?: string;
 }
 
 export interface AdminOptions {

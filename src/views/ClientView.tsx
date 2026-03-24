@@ -3,7 +3,7 @@ import { useAppContext } from '../context/AppContext';
 import { Task } from '../types';
 import { getDeptDelayedInfo } from '../utils';
 import { X, ExternalLink, ChevronDown, ChevronUp, ChevronRight } from 'lucide-react';
-import { calcTaskMs, calcTaskOverrunMs, getTaskEstHours, msToHrs } from '../utils/productiveHours';
+import { calcTaskMs, calcTaskOverrunMsLegacy as calcTaskOverrunMs, getTaskEstHours, msToHrs } from '../utils/productiveHours';
 
 type SortKey = 'intakeDate' | 'title' | 'actualHours' | 'days';
 

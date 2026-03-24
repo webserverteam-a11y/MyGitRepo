@@ -4,7 +4,7 @@ import { useAppContext } from '../context/AppContext';
 import { useAllOwners } from '../hooks/useAllOwners';
 import { Task, DeptType } from '../types';
 import { X, Plus, Pencil, ExternalLink, Check, ChevronDown, ChevronUp, Play, Clock, RotateCcw, AlertCircle } from 'lucide-react';
-import { calcTaskOverrunMs, getTaskEstHours, msToHrs } from '../utils/productiveHours';
+import { calcTaskOverrunMsLegacy as calcTaskOverrunMs, getTaskEstHours, msToHrs } from '../utils/productiveHours';
 
 // ── Config ────────────────────────────────────────────────────────────────
 const DEPT_CONFIG: Record<DeptType, { color:string; bg:string; border:string; icon:string }> = {
@@ -372,7 +372,7 @@ export function WorkHub() {
       if (t.id !== taskId) return t;
       const now = new Date().toISOString();
       return { ...t, executionState: newState as any, isCompleted: newState==='Completed'||newState==='Approved',
-        timeEvents: [...(t.timeEvents||[]), { type:type as any, timestamp:now, department:t.deptType||'Work' }] };
+        timeEvents: [...(t.timeEvents||[]), { type:type as any, timestamp:now, department:t.deptType||'Work', owner: currentUser?.ownerName || '' }] };
     }));
   };
 
@@ -383,7 +383,7 @@ export function WorkHub() {
       const entry = { id:`rw_${Date.now()}`, date:today, estHours:0, assignedDept:'Content' as any, assignedOwner:'', withinEstimate:true, hoursAlreadySpent:0, startTimestamp:now };
       return { ...t, executionState:'Rework', isCompleted:false,
         reworkEntries:[...(t.reworkEntries||[]), entry],
-        timeEvents:[...(t.timeEvents||[]), { type:'rework_start' as any, timestamp:now, department:t.deptType||'Work' }],
+        timeEvents:[...(t.timeEvents||[]), { type:'rework_start' as any, timestamp:now, department:t.deptType||'Work', owner: currentUser?.ownerName || '' }],
         remarks: note ? `${t.remarks?t.remarks+'\n':''}Rework: ${note}` : t.remarks };
     }));
     if (historyTask?.id === taskId) setHistoryTask(prev => tasks.find(t=>t.id===taskId)||null);
