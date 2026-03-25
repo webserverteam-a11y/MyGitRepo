@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { useAppContext } from '../context/AppContext';
-import { Task, TimeEvent, ExecutionState, ReworkEntry, Comment } from '../types';
+import { Task, TimeEvent, ExecutionState, ReworkEntry, Comment, QCReview } from '../types';
+import { calcTaskOwnerMs } from '../utils/productiveHours';
 import {
   Play, Pause, Square, RotateCcw, ChevronDown, ChevronUp, Clock,
   CheckCircle2, ArrowRight, UserCircle, LayoutList, LayoutGrid, Plus,
@@ -143,7 +144,8 @@ export function ActionView() {
       if (activeStateFilter === 'Delayed') {
         const assignedDate = t.currentOwner === 'SEO' ? t.intakeDate : t.currentOwner === 'Content' ? t.contentAssignedDate : t.webAssignedDate;
         const est = t.currentOwner === 'SEO' ? (t.estHoursSEO || t.estHours || 0) : t.currentOwner === 'Content' ? (t.estHoursContent || 0) : (t.estHoursWeb || 0);
-        const { isDelayed } = getDeptDelayedInfo(assignedDate || '', est, 0);
+        const tTimes = getTaskTimes(t);
+        const { isDelayed } = getDeptDelayedInfo(assignedDate || '', est, tTimes.activeMs);
         if (!isDelayed) return false;
       }
       return true;
@@ -163,7 +165,8 @@ export function ActionView() {
     delayed: filteredTasks.filter(t => {
       const assignedDate = t.currentOwner === 'SEO' ? t.intakeDate : t.currentOwner === 'Content' ? t.contentAssignedDate : t.webAssignedDate;
       const est = t.currentOwner === 'SEO' ? (t.estHoursSEO || t.estHours || 0) : t.currentOwner === 'Content' ? (t.estHoursContent || 0) : (t.estHoursWeb || 0);
-      const { isDelayed } = getDeptDelayedInfo(assignedDate || '', est, 0);
+      const tTimes = getTaskTimes(t);
+      const { isDelayed } = getDeptDelayedInfo(assignedDate || '', est, tTimes.activeMs);
       return isDelayed;
     }).length,
   }), [filteredTasks]);
@@ -211,7 +214,9 @@ export function ActionView() {
     let activeMs = 0, pauseMs = 0, reworkMs = 0;
     let lastStart = 0, lastPause = 0, lastRework = 0;
     let state = 'Not Started';
-    (task.timeEvents || []).forEach(e => {
+    // Filter to current department only so cross-dept time doesn't inflate numbers
+    const deptEvents = (task.timeEvents || []).filter(e => e.department === task.currentOwner);
+    deptEvents.forEach(e => {
       const t = new Date(e.timestamp).getTime();
       if (e.type === 'start' || e.type === 'resume') {
         if (state === 'Paused' && lastPause) pauseMs += (t - lastPause);
@@ -300,7 +305,19 @@ export function ActionView() {
     }));
   };
 
+  // QC Submit modal state
+  const [qcEstHours, setQcEstHours] = useState('0.25');
+  const [qcNote, setQcNote] = useState('');
+
   const handleActionSelect = (actionType: string) => {
+    // Fix 2a: rework from End Task modal should open rework modal, not bypass it
+    if (actionType === 'rework' && endingTask) {
+      openReworkModal(endingTask);
+      setEndingTask(null);
+      setHandoffStep('select_action');
+      setSelectedAction(null);
+      return;
+    }
     setSelectedAction(actionType);
     if (['assign_content', 'assign_web', 'qc_seo', 'qc_web'].includes(actionType)) {
       setHandoffStep('configure_assignment');
@@ -310,6 +327,9 @@ export function ActionView() {
       if (actionType === 'assign_content') setAssignmentOwner(adminOptions.contentOwners[0] || '');
       else if (actionType === 'assign_web' || actionType === 'qc_web') setAssignmentOwner(adminOptions.webOwners[0] || '');
       else if (actionType === 'qc_seo') setAssignmentOwner(endingTask?.seoOwner || adminOptions.seoOwners[0] || '');
+      // Reset QC fields
+      setQcEstHours('0.25');
+      setQcNote('');
     } else {
       executeHandoff(actionType, '', '', 0, '');
     }
@@ -338,13 +358,54 @@ export function ActionView() {
       switch (actionType) {
         case 'assign_content': updated.currentOwner = 'Content'; updated.contentOwner = owner; updated.contentAssignedDate = date; updated.executionState = 'Not Started'; if (estHrs > 0) updated.estHoursContent = estHrs; break;
         case 'assign_web': updated.currentOwner = 'Web'; updated.webOwner = owner; updated.webAssignedDate = date; updated.executionState = 'Not Started'; if (estHrs > 0) updated.estHoursWeb = estHrs; break;
-        case 'qc_seo': updated.currentOwner = 'SEO'; updated.seoOwner = owner; updated.executionState = 'Not Started'; updated.seoQcStatus = 'Pending QC';
-          // Stamp today as the SEO intakeDate so it appears in SEO's date filters from today
+        case 'qc_seo': {
+          updated.currentOwner = 'SEO'; updated.seoOwner = owner; updated.executionState = 'Not Started'; updated.seoQcStatus = 'Pending QC';
           updated.intakeDate = nowTs.split('T')[0];
+          // Create QCReview entry
+          const qcReviewSEO: QCReview = {
+            id: `qc_${Date.now()}`,
+            submittedBy: currentUser?.ownerName || '',
+            submittedByDept: currentUser?.role === 'content' ? 'Content' : 'Web',
+            submittedAt: nowTs,
+            assignedTo: owner,
+            estHours: parseFloat(qcEstHours) || 0.25,
+            note: qcNote || undefined,
+          };
+          updated.qcReviews = [...(t.qcReviews || []), qcReviewSEO];
           break;
-        case 'qc_web': updated.currentOwner = 'Web'; updated.webOwner = owner; updated.executionState = 'Not Started'; updated.webStatus = 'Pending QC'; break;
-        case 'approve': updated.seoQcStatus = 'Approved'; updated.isCompleted = true; updated.currentOwner = 'Completed'; updated.executionState = 'Ended'; break;
-        case 'rework': updated.seoQcStatus = 'Rework'; updated.executionState = 'Rework'; break;
+        }
+        case 'qc_web': {
+          updated.currentOwner = 'Web'; updated.webOwner = owner; updated.executionState = 'Not Started'; updated.webStatus = 'Pending QC';
+          const qcReviewWeb: QCReview = {
+            id: `qc_${Date.now()}`,
+            submittedBy: currentUser?.ownerName || '',
+            submittedByDept: currentUser?.role === 'content' ? 'Content' : 'Web',
+            submittedAt: nowTs,
+            assignedTo: owner,
+            estHours: parseFloat(qcEstHours) || 0.25,
+            note: qcNote || undefined,
+          };
+          updated.qcReviews = [...(t.qcReviews || []), qcReviewWeb];
+          break;
+        }
+        case 'approve': {
+          updated.seoQcStatus = 'Approved'; updated.isCompleted = true; updated.currentOwner = 'Completed'; updated.executionState = 'Ended';
+          // Save outcome to latest qcReview
+          if (updated.qcReviews && updated.qcReviews.length > 0) {
+            const qrs = [...updated.qcReviews];
+            qrs[qrs.length - 1] = { ...qrs[qrs.length - 1], outcome: 'Approved', completedAt: nowTs };
+            updated.qcReviews = qrs;
+          }
+          break;
+        }
+        case 'rework': updated.seoQcStatus = 'Rework'; updated.executionState = 'Rework';
+          // Save outcome to latest qcReview
+          if (updated.qcReviews && updated.qcReviews.length > 0) {
+            const qrs = [...updated.qcReviews];
+            qrs[qrs.length - 1] = { ...qrs[qrs.length - 1], outcome: 'Rework', completedAt: nowTs };
+            updated.qcReviews = qrs;
+          }
+          break;
         case 'close': updated.currentOwner = 'Completed'; updated.isCompleted = true; updated.executionState = 'Ended'; break;
       }
       return updated;
@@ -395,6 +456,13 @@ export function ActionView() {
           : { webOwner: reworkForm.assignedOwner, webAssignedDate: reworkForm.date }),
         reworkEntries: [...(t.reworkEntries || []), newEntry],
         timeEvents: events,
+        // Save rework outcome to latest qcReview
+        qcReviews: (() => {
+          if (!t.qcReviews || t.qcReviews.length === 0) return t.qcReviews;
+          const qrs = [...t.qcReviews];
+          qrs[qrs.length - 1] = { ...qrs[qrs.length - 1], outcome: 'Rework' as const, completedAt: new Date().toISOString() };
+          return qrs;
+        })(),
       };
     }));
     setReworkingTask(null);
@@ -744,7 +812,7 @@ export function ActionView() {
                                 <button onClick={() => logEvent(task.id, 'resume', 'In Progress')} className="p-1.5 bg-indigo-100 hover:bg-indigo-200 text-indigo-700 rounded-md" title="Resume"><Play className="w-3.5 h-3.5" /></button>
                                 <button onClick={() => setEndingTask(task)} className="p-1.5 bg-emerald-100 hover:bg-emerald-200 text-emerald-700 rounded-md" title="End Task"><CheckCircle2 className="w-3.5 h-3.5" /></button>
                               </>}
-                              {((task.executionState === 'Rework' && task.currentOwner === 'SEO') ||
+                              {(isAdmin || currentUser?.role === 'seo') && ((task.executionState === 'Rework' && task.currentOwner === 'SEO') ||
                                 (task.currentOwner === 'SEO' && (task.seoQcStatus === 'Pending QC' || task.seoQcStatus === 'QC') && (task.executionState === 'In Progress' || task.executionState === 'Paused'))) && (
                                 <button onClick={() => openReworkModal(task)} className="p-1.5 bg-purple-100 hover:bg-purple-200 text-purple-700 rounded-md" title="Raise Rework"><RotateCcw className="w-3.5 h-3.5" /></button>
                               )}
@@ -858,7 +926,7 @@ export function ActionView() {
                             <button onClick={() => setEndingTask(task)} className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded-lg"><CheckCircle2 className="w-4 h-4" /> End Task</button>
                           </>}
                           {/* Raise Rework: show when SEO has a rework to assign, OR mid-review on QC submitted task */}
-                          {((task.executionState === 'Rework' && task.currentOwner === 'SEO') ||
+                          {(isAdmin || currentUser?.role === 'seo') && ((task.executionState === 'Rework' && task.currentOwner === 'SEO') ||
                             (task.currentOwner === 'SEO' && (task.seoQcStatus === 'Pending QC' || task.seoQcStatus === 'QC') && (task.executionState === 'In Progress' || task.executionState === 'Paused'))) && (
                             <button onClick={() => openReworkModal(task)} className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white text-sm font-medium rounded-lg"><RotateCcw className="w-4 h-4" /> Raise Rework</button>
                           )}
@@ -972,6 +1040,19 @@ export function ActionView() {
                       <input type="number" min="0" step="0.5" placeholder="e.g. 3.5" value={assignmentEstHours} onChange={e => setAssignmentEstHours(e.target.value)} className="w-full border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
                       <p className="text-xs text-slate-400 mt-1">Used to track delays</p>
                     </div>
+                  )}
+                  {(selectedAction === 'qc_seo' || selectedAction === 'qc_web') && (
+                    <>
+                      <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1">Suggested review time (hours)</label>
+                        <input type="number" min="0" step="0.25" placeholder="0.25" value={qcEstHours} onChange={e => setQcEstHours(e.target.value)} className="w-full border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                        <p className="text-xs text-slate-400 mt-1">e.g. 0.25 = 15 min. Pre-filled with default.</p>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1">Note for reviewer <span className="text-slate-400 font-normal">(optional)</span></label>
+                        <textarea rows={2} value={qcNote} onChange={e => setQcNote(e.target.value)} placeholder="Any context for the reviewer..." className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                      </div>
+                    </>
                   )}
                   <div>
                     <label className="block text-sm font-medium text-slate-700 mb-1">
@@ -1224,6 +1305,37 @@ function ExpandedContent({ task, times, formatMs, getOwnerName, commentTaskId, s
         <div><p className="text-xs text-slate-500 font-medium">Total Paused</p><p className="text-lg font-mono text-slate-800">{formatMs(times.pauseMs)}</p></div>
         <div><p className="text-xs text-slate-500 font-medium">Total Rework</p><p className="text-lg font-mono text-slate-800">{formatMs(times.reworkMs)}</p></div>
       </div>
+
+      {/* QC Review info — show latest qcReview when in QC state */}
+      {(task.seoQcStatus === 'Pending QC' || task.seoQcStatus === 'QC') && task.qcReviews && task.qcReviews.length > 0 && (() => {
+        const latestQc = task.qcReviews[task.qcReviews.length - 1];
+        const reviewNum = task.qcReviews.length;
+        const estMin = Math.round((latestQc.estHours || 0) * 60);
+        return (
+          <div className="mb-4 bg-teal-50 border border-teal-200 rounded-xl p-4">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-bold text-teal-700 uppercase">QC Review #{reviewNum}</span>
+              {latestQc.outcome && <span className={cn("text-xs font-bold px-2 py-0.5 rounded", latestQc.outcome === 'Approved' ? "bg-emerald-100 text-emerald-700" : "bg-purple-100 text-purple-700")}>{latestQc.outcome === 'Approved' ? '✓ Approved' : '↩ Rework'}</span>}
+            </div>
+            <div className="grid grid-cols-2 gap-3 text-xs">
+              <div><p className="text-teal-600 font-medium mb-0.5">Submitted by</p><p className="font-semibold text-slate-800">{latestQc.submittedBy} ({latestQc.submittedByDept})</p></div>
+              <div><p className="text-teal-600 font-medium mb-0.5">Submitted at</p><p className="font-mono font-semibold text-slate-800">{new Date(latestQc.submittedAt).toLocaleString()}</p></div>
+              <div><p className="text-teal-600 font-medium mb-0.5">Review est</p><p className="font-semibold text-slate-800">{latestQc.estHours}h ({estMin}m)</p></div>
+              <div><p className="text-teal-600 font-medium mb-0.5">Assigned to</p><p className="font-semibold text-slate-800">{latestQc.assignedTo}</p></div>
+            </div>
+            {latestQc.note && <div className="mt-2 text-xs"><p className="text-teal-600 font-medium mb-0.5">Note</p><p className="text-slate-700 italic">"{latestQc.note}"</p></div>}
+            {latestQc.reworkNote && <div className="mt-2 text-xs"><p className="text-purple-600 font-medium mb-0.5">Rework note</p><p className="text-slate-700 italic">"{latestQc.reworkNote}"</p></div>}
+            <div className="mt-3 pt-2 border-t border-teal-200 text-xs">
+              <p className="text-teal-600 font-medium mb-0.5">Est. Hours (original)</p>
+              <div className="flex gap-4">
+                {(task.estHoursSEO || task.estHours || 0) > 0 && <span><span className="text-blue-600">SEO:</span> {task.estHoursSEO || task.estHours}h</span>}
+                {(task.estHoursContent || 0) > 0 && <span><span className="text-orange-600">Con:</span> {task.estHoursContent}h</span>}
+                {(task.estHoursWeb || 0) > 0 && <span><span className="text-emerald-600">Web:</span> {task.estHoursWeb}h</span>}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Rework history */}
       {task.reworkEntries && task.reworkEntries.length > 0 && (

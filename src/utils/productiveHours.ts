@@ -84,8 +84,86 @@ export function calcTaskOwnerMs(
   return 0;
 }
 
+// ── Rework-only ms (only intervals starting with rework_start) ───────
+export function calcTaskReworkMs(
+  task: Task,
+  ownerName: string,
+  dateFrom?: string,
+  dateTo?: string,
+): number {
+  const events = task.timeEvents || [];
+  if (events.length === 0) return 0;
+
+  const hasOwnerStamp = events.some(e => !!e.owner);
+  const relevant = hasOwnerStamp
+    ? events.filter(e => e.owner === ownerName)
+    : (task.seoOwner === ownerName || task.contentOwner === ownerName || task.webOwner === ownerName || task.assignedTo === ownerName)
+      ? events
+      : [];
+  if (relevant.length === 0) return 0;
+
+  let ms = 0;
+  let lastReworkStart: number | null = null;
+  for (const e of relevant) {
+    const ts = new Date(e.timestamp).getTime();
+    if (e.type === 'rework_start') {
+      lastReworkStart = ts;
+    } else if ((e.type === 'pause' || e.type === 'end') && lastReworkStart !== null) {
+      if (dateFrom || dateTo) {
+        const rangeStart = dateFrom ? new Date(dateFrom).getTime() : 0;
+        const rangeEnd = dateTo ? new Date(dateTo + 'T23:59:59.999Z').getTime() : Infinity;
+        const clampedStart = Math.max(lastReworkStart, rangeStart);
+        const clampedEnd = Math.min(ts, rangeEnd);
+        if (clampedEnd > clampedStart) ms += clampedEnd - clampedStart;
+      } else {
+        ms += ts - lastReworkStart;
+      }
+      lastReworkStart = null;
+    } else if (e.type === 'start' || e.type === 'resume') {
+      // A normal start/resume ends the rework interval
+      if (lastReworkStart !== null) {
+        if (dateFrom || dateTo) {
+          const rangeStart = dateFrom ? new Date(dateFrom).getTime() : 0;
+          const rangeEnd = dateTo ? new Date(dateTo + 'T23:59:59.999Z').getTime() : Infinity;
+          const clampedStart = Math.max(lastReworkStart, rangeStart);
+          const clampedEnd = Math.min(ts, rangeEnd);
+          if (clampedEnd > clampedStart) ms += clampedEnd - clampedStart;
+        } else {
+          ms += ts - lastReworkStart;
+        }
+        lastReworkStart = null;
+      }
+    }
+  }
+  return ms;
+}
+
 // ── Owner-specific est hours ─────────────────────────────────────────
-export function calcOwnerEstHrs(task: Task, ownerName: string): number {
+export function calcOwnerEstHrs(task: Task, ownerName: string, phase?: 'work' | 'qc'): number {
+  // Phase = 'qc' → return QC review est from qcReviews
+  if (phase === 'qc') {
+    const reviews = task.qcReviews || [];
+    const match = [...reviews].reverse().find(r => r.assignedTo === ownerName);
+    return match ? match.estHours : 0;
+  }
+  // Phase = 'work' → original dept est
+  if (phase === 'work') {
+    if (task.deptType && task.deptType !== 'SEO') return task.estHours || 0;
+    if (task.contentOwner === ownerName) return task.estHoursContent || 0;
+    if (task.webOwner === ownerName) return task.estHoursWeb || 0;
+    if (task.seoOwner === ownerName) return task.estHoursSEO || task.estHours || 0;
+    return task.estHours || 0;
+  }
+  // Auto-detect: if in QC phase and owner is the SEO reviewer → use qcReviews est
+  if (
+    (task.seoQcStatus === 'Pending QC' || task.seoQcStatus === 'QC') &&
+    task.seoOwner === ownerName &&
+    task.qcReviews && task.qcReviews.length > 0
+  ) {
+    const latest = task.qcReviews[task.qcReviews.length - 1];
+    if (latest.assignedTo === ownerName && !latest.completedAt) return latest.estHours;
+  }
+  // Default: original dept est
   if (task.deptType && task.deptType !== 'SEO') return task.estHours || 0;
   if (task.contentOwner === ownerName) return task.estHoursContent || 0;
   if (task.webOwner === ownerName) return task.estHoursWeb || 0;

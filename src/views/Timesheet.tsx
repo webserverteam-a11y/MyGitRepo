@@ -5,7 +5,7 @@ import { ChevronDown, ChevronUp, Download } from 'lucide-react';
 import {
   calcTaskRawMs, calcTaskOwnerMs, calcOwnerEstHrs,
   calcTaskProductiveMs, calcTaskOverrunMs, calcOwnerTotals,
-  getOwnerDeptLabel, getTaskEstHours, fmtMs, fmtH, msToHrs,
+  calcTaskReworkMs, getOwnerDeptLabel, getTaskEstHours, fmtMs, fmtH, msToHrs,
 } from '../utils/productiveHours';
 
 const TARGET_H = 8;
@@ -132,7 +132,15 @@ export function Timesheet() {
     const pct = targetHrs > 0 ? Math.round(productiveHrs / targetHrs * 100) : 0;
     const daysLogged = workDays.filter(d => getOwnerDayMs(tasks, owner, d.date) > 0).length;
     const maxDay = workDays.reduce((max, d) => { const h = getOwnerDayMs(tasks, owner, d.date) / 3600000; return h > max.h ? { h, date: d.date } : max; }, { h: 0, date: '' });
-    return { targetHrs, loggedHrs, productiveHrs, overrunHrs, shortfall, leaveDays, workDays: workDays.length, pct, daysLogged, maxDay };
+    // Rework totals
+    const reworkMs = tasks.reduce((s, t) => s + calcTaskReworkMs(t, owner, dateFrom, dateTo), 0);
+    const reworkHrs = reworkMs / 3600000;
+    // Est totals
+    const estHrs = tasks.filter(t => t.seoOwner === owner || t.contentOwner === owner || t.webOwner === owner || t.assignedTo === owner).reduce((s, t) => s + calcOwnerEstHrs(t, owner), 0);
+    // QC totals
+    const qcTasks = tasks.filter(t => (t.qcReviews || []).some((qr: any) => qr.assignedTo === owner));
+    const qcHrs = qcTasks.reduce((s, t) => (t.qcReviews || []).filter((qr: any) => qr.assignedTo === owner).reduce((ss: number, qr: any) => ss + (qr.estHours || 0), s), 0);
+    return { targetHrs, loggedHrs, productiveHrs, overrunHrs, shortfall, leaveDays, workDays: workDays.length, pct, daysLogged, maxDay, reworkHrs, estHrs, qcHrs, qcTasks };
   };
 
   const cellColor = (productive: number, expected: number, isLeave: boolean, isWknd: boolean) => {
@@ -451,6 +459,7 @@ export function Timesheet() {
                 <thead style={{ position: 'sticky', top: 0, zIndex: 5 }}>
                   <tr>
                     <th style={{ fontSize: 10, fontWeight: 500, padding: '8px 12px', background: 'var(--color-background-secondary)', color: 'var(--color-text-secondary)', textAlign: 'left', borderBottom: '0.5px solid var(--color-border-tertiary)', minWidth: 220, position: 'sticky', left: 0, zIndex: 6 }}>Owner / Task</th>
+                    <th style={{ fontSize: 9, fontWeight: 600, padding: '6px 8px', background: '#F5F3FF', color: '#5B21B6', textAlign: 'center', borderBottom: '0.5px solid var(--color-border-tertiary)', borderLeft: '0.5px solid #C4B5FD', minWidth: 50, whiteSpace: 'nowrap' }}>Est</th>
                     {useWeekCols ? weeks.map(wk => {
                       const isExp = expandedWeeks.has(wk.label);
                       return [
@@ -459,6 +468,7 @@ export function Timesheet() {
                       ];
                     }).flat() : allDates.map(ds => renderDayHeader(ds))}
                     <th style={{ fontSize: 9, fontWeight: 600, padding: '6px 8px', background: '#E6F1FB', color: '#0C447C', textAlign: 'center', borderBottom: '0.5px solid var(--color-border-tertiary)', borderLeft: '0.5px solid #B5D4F4', minWidth: 60, whiteSpace: 'nowrap' }}>Logged</th>
+                    <th style={{ fontSize: 9, fontWeight: 600, padding: '6px 8px', background: '#FFFBEB', color: '#92400E', textAlign: 'center', borderBottom: '0.5px solid var(--color-border-tertiary)', borderLeft: '0.5px solid #FDE68A', minWidth: 60, whiteSpace: 'nowrap' }}>Rework</th>
                     <th style={{ fontSize: 9, fontWeight: 600, padding: '6px 8px', background: '#E1F5EE', color: '#085041', textAlign: 'center', borderBottom: '0.5px solid var(--color-border-tertiary)', borderLeft: '0.5px solid #9FE1CB', minWidth: 66, whiteSpace: 'nowrap' }}>Productive</th>
                     <th style={{ fontSize: 9, fontWeight: 600, padding: '6px 8px', background: '#FCEBEB', color: '#791F1F', textAlign: 'center', borderBottom: '0.5px solid var(--color-border-tertiary)', borderLeft: '0.5px solid #F7C1C1', minWidth: 60, whiteSpace: 'nowrap' }}>Overrun</th>
                     <th style={{ fontSize: 9, fontWeight: 600, padding: '6px 8px', background: '#E6F1FB', color: '#0C447C', textAlign: 'center', borderBottom: '0.5px solid var(--color-border-tertiary)', borderLeft: '0.5px solid #B5D4F4', minWidth: 60, whiteSpace: 'nowrap' }}>Target</th>
@@ -467,7 +477,7 @@ export function Timesheet() {
                 </thead>
                 <tbody>
                   {visibleOwners.map(owner => {
-                    const { targetHrs, loggedHrs, productiveHrs, overrunHrs, shortfall, leaveDays } = ownerSummary(owner);
+                    const { targetHrs, loggedHrs, productiveHrs, overrunHrs, shortfall, leaveDays, reworkHrs, estHrs, qcHrs, qcTasks } = ownerSummary(owner);
                     const ownerTasks = getOwnerTasks(owner);
                     const isCollapsed = collapsedOwners.has(owner);
                     return (
@@ -482,8 +492,12 @@ export function Timesheet() {
                               <span style={{ fontSize: 9, color: '#185FA5', fontWeight: 400, opacity: .7 }}>{ownerTasks.length} task{ownerTasks.length !== 1 ? 's' : ''}</span>
                             </div>
                           </td>
+                          <td style={{ textAlign: 'center', padding: '6px 8px', borderBottom: '0.5px solid var(--color-border-tertiary)', borderLeft: '0.5px solid #C4B5FD', fontSize: 11, fontWeight: 600, color: '#5B21B6', background: '#F5F3FF20' }}>{fmtH(estHrs)}</td>
                           {renderOwnerCells(owner)}
                           <td style={{ textAlign: 'center', padding: '6px 8px', borderBottom: '0.5px solid var(--color-border-tertiary)', borderLeft: '0.5px solid #B5D4F4', fontSize: 11, fontWeight: 600, color: '#0C447C', background: '#E6F1FB20' }}>{fmtH(loggedHrs)}</td>
+                          <td style={{ textAlign: 'center', padding: '6px 8px', borderBottom: '0.5px solid var(--color-border-tertiary)', borderLeft: '0.5px solid #FDE68A', fontSize: 11, fontWeight: 600, color: reworkHrs > 0.01 ? '#92400E' : 'var(--color-text-tertiary)', background: reworkHrs > 0.01 ? '#FFFBEB20' : 'transparent' }}>
+                            {reworkHrs > 0.01 ? fmtH(reworkHrs) : '—'}
+                          </td>
                           <td style={{ textAlign: 'center', padding: '6px 8px', borderBottom: '0.5px solid var(--color-border-tertiary)', borderLeft: '0.5px solid #9FE1CB', fontSize: 11, fontWeight: 600, color: '#085041', background: '#E1F5EE20' }}>{fmtH(productiveHrs)}</td>
                           <td style={{ textAlign: 'center', padding: '6px 8px', borderBottom: '0.5px solid var(--color-border-tertiary)', borderLeft: '0.5px solid #F7C1C1', fontSize: 11, fontWeight: 600, color: overrunHrs > 0.01 ? '#DC2626' : '#059669', background: overrunHrs > 0.01 ? '#FEF2F220' : 'transparent' }}>
                             {overrunHrs > 0.01 ? `+${fmtH(overrunHrs)}` : '—'}
@@ -503,8 +517,12 @@ export function Timesheet() {
                           const estH = calcOwnerEstHrs(task, owner);
                           const tProdMs = calcTaskProductiveMs(task, owner, dateFrom, dateTo);
                           const tOverMs = calcTaskOverrunMs(task, owner, dateFrom, dateTo);
+                          const tReworkMs = calcTaskReworkMs(task, owner, dateFrom, dateTo);
+                          const tReworkH = tReworkMs / 3600000;
+                          const taskQcReviews = (task.qcReviews || []).filter((qr: any) => qr.assignedTo === owner);
                           return (
-                            <tr key={task.id} className="hover:brightness-95">
+                            <React.Fragment key={task.id}>
+                            <tr className="hover:brightness-95">
                               <td style={{ fontSize: 11, padding: '5px 12px 5px 28px', borderBottom: '0.5px solid var(--color-border-tertiary)', color: 'var(--color-text-secondary)', position: 'sticky', left: 0, background: 'var(--color-background-primary)', zIndex: 1 }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
                                   <span style={{ fontSize: 9, fontWeight: 600, padding: '1px 5px', borderRadius: 99, color: deptColor, background: deptBg, flexShrink: 0 }}>{dept}</span>
@@ -512,8 +530,12 @@ export function Timesheet() {
                                 </div>
                                 <div style={{ fontSize: 9, color: 'var(--color-text-tertiary)', marginTop: 1 }}>{task.client} · {task.id}{estH > 0 ? ` · Est ${fmtH(estH)}` : ''}</div>
                               </td>
+                              <td style={{ textAlign: 'center', padding: '5px 8px', borderBottom: '0.5px solid var(--color-border-tertiary)', borderLeft: '0.5px solid #C4B5FD', fontSize: 10, fontWeight: 500, color: estH > 0 ? '#5B21B6' : 'var(--color-text-tertiary)' }}>{estH > 0 ? `${estH}h` : '—'}</td>
                               {renderTaskCells(task, owner)}
                               <td style={{ textAlign: 'center', padding: '5px 8px', borderBottom: '0.5px solid var(--color-border-tertiary)', borderLeft: '0.5px solid #B5D4F4', fontSize: 10, fontWeight: 500, color: '#0C447C' }}>{fmtMs(loggedMs)}</td>
+                              <td style={{ textAlign: 'center', padding: '5px 8px', borderBottom: '0.5px solid var(--color-border-tertiary)', borderLeft: '0.5px solid #FDE68A', fontSize: 10, fontWeight: 500, color: tReworkH > 0.01 ? '#92400E' : 'var(--color-text-tertiary)' }}>
+                                {tReworkH > 0.01 ? fmtMs(tReworkMs) : '—'}
+                              </td>
                               <td style={{ textAlign: 'center', padding: '5px 8px', borderBottom: '0.5px solid var(--color-border-tertiary)', borderLeft: '0.5px solid #9FE1CB', fontSize: 10, fontWeight: 500, color: '#085041' }}>{fmtMs(tProdMs)}</td>
                               <td style={{ textAlign: 'center', padding: '5px 8px', borderBottom: '0.5px solid var(--color-border-tertiary)', borderLeft: '0.5px solid #F7C1C1', fontSize: 10, fontWeight: 500, color: tOverMs > 0 ? '#DC2626' : 'var(--color-text-tertiary)' }}>
                                 {estH <= 0 ? <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 99, background: '#F3F4F6', color: '#9CA3AF' }}>no est</span> : tOverMs > 0 ? <span style={{ padding: '1px 6px', borderRadius: 99, background: '#FEF2F2', color: '#DC2626', border: '1px solid #DC262630' }}>+{fmtMs(tOverMs)}</span> : <span style={{ color: '#059669' }}>✓</span>}
@@ -521,6 +543,33 @@ export function Timesheet() {
                               <td style={{ textAlign: 'center', padding: '5px 8px', borderBottom: '0.5px solid var(--color-border-tertiary)', borderLeft: '0.5px solid #B5D4F4', fontSize: 10, color: 'var(--color-text-tertiary)' }}>{estH > 0 ? `${estH}h` : '—'}</td>
                               <td style={{ padding: '5px 8px', borderBottom: '0.5px solid var(--color-border-tertiary)', borderLeft: '0.5px solid #F7C1C1' }} />
                             </tr>
+                            {/* QC sub-rows */}
+                            {taskQcReviews.map((qr: any, qIdx: number) => (
+                              <tr key={`qc-${qr.id}`} style={{ background: '#F0FDFA' }}>
+                                <td style={{ fontSize: 10, padding: '4px 12px 4px 40px', borderBottom: '0.5px solid var(--color-border-tertiary)', color: '#0D9488', position: 'sticky', left: 0, background: '#F0FDFA', zIndex: 1 }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                    <span style={{ fontSize: 8, fontWeight: 700, padding: '1px 5px', borderRadius: 99, color: '#0D9488', background: '#CCFBF1', flexShrink: 0 }}>QC #{qIdx + 1}</span>
+                                    <span style={{ fontSize: 9, color: '#115E59' }}>by {qr.submittedBy}</span>
+                                    {qr.outcome === 'Approved' && <span style={{ fontSize: 8, fontWeight: 600, color: '#059669' }}>✓</span>}
+                                    {qr.outcome === 'Rework' && <span style={{ fontSize: 8, fontWeight: 600, color: '#7C3AED' }}>↩</span>}
+                                  </div>
+                                </td>
+                                <td style={{ textAlign: 'center', padding: '4px 8px', borderBottom: '0.5px solid var(--color-border-tertiary)', borderLeft: '0.5px solid #C4B5FD', fontSize: 10, fontWeight: 500, color: '#0D9488' }}>{qr.estHours ? `${qr.estHours}h` : '—'}</td>
+                                {(useWeekCols ? weeks.map(wk => {
+                                  const isExp = expandedWeeks.has(wk.label);
+                                  const cells = [<td key={wk.label} style={{ borderBottom: '0.5px solid var(--color-border-tertiary)', borderLeft: '0.5px solid var(--color-border-tertiary)', background: '#F0FDFA' }} />];
+                                  if (isExp) wk.dates.forEach(ds => cells.push(<td key={ds} style={{ borderBottom: '0.5px solid var(--color-border-tertiary)', borderLeft: '0.5px solid var(--color-border-tertiary)', background: '#F0FDFA' }} />));
+                                  return cells;
+                                }).flat() : allDates.map(ds => <td key={ds} style={{ borderBottom: '0.5px solid var(--color-border-tertiary)', borderLeft: '0.5px solid var(--color-border-tertiary)', background: '#F0FDFA' }} />))}
+                                <td style={{ borderBottom: '0.5px solid var(--color-border-tertiary)', borderLeft: '0.5px solid #B5D4F4', background: '#F0FDFA' }} />
+                                <td style={{ borderBottom: '0.5px solid var(--color-border-tertiary)', borderLeft: '0.5px solid #FDE68A', background: '#F0FDFA' }} />
+                                <td style={{ borderBottom: '0.5px solid var(--color-border-tertiary)', borderLeft: '0.5px solid #9FE1CB', background: '#F0FDFA' }} />
+                                <td style={{ borderBottom: '0.5px solid var(--color-border-tertiary)', borderLeft: '0.5px solid #F7C1C1', background: '#F0FDFA' }} />
+                                <td style={{ borderBottom: '0.5px solid var(--color-border-tertiary)', borderLeft: '0.5px solid #B5D4F4', background: '#F0FDFA' }} />
+                                <td style={{ borderBottom: '0.5px solid var(--color-border-tertiary)', borderLeft: '0.5px solid #F7C1C1', background: '#F0FDFA' }} />
+                              </tr>
+                            ))}
+                            </React.Fragment>
                           );
                         })}
                       </React.Fragment>
@@ -546,6 +595,8 @@ export function Timesheet() {
             const totalOverrun = allData.reduce((s, o) => s + o.overrunHrs, 0);
             const totalTarget = allData.reduce((s, o) => s + o.targetHrs, 0);
             const totalShortfall = allData.reduce((s, o) => s + o.shortfall, 0);
+            const totalRework = allData.reduce((s, o) => s + o.reworkHrs, 0);
+            const totalQcH = allData.reduce((s, o) => s + o.qcHrs, 0);
             const teamCapacityH = allOwners.length * allData[0]?.workDays * TARGET_H;
             const utilPct = teamCapacityH > 0 ? Math.round(totalProductive / teamCapacityH * 100) : 0;
             return (
@@ -560,6 +611,12 @@ export function Timesheet() {
                   </span>
                   {totalOverrun > 0.01 && <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 11px', borderRadius: 99, fontSize: 11, fontWeight: 500, color: totalOverrun > 1 ? '#DC2626' : '#D97706', background: totalOverrun > 1 ? '#FEF2F2' : '#FFFBEB', border: `1px solid ${totalOverrun > 1 ? '#DC262640' : '#D9770640'}` }}>
                     ⚠ {fmtH(totalOverrun)} total overrun {hasOverrun.length > 0 && `(${hasOverrun.map(o => o.owner).join(', ')})`}
+                  </span>}
+                  {totalRework > 0.01 && <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 11px', borderRadius: 99, fontSize: 11, fontWeight: 500, color: '#92400E', background: '#FFFBEB', border: '1px solid #FDE68A' }}>
+                    ↻ {fmtH(totalRework)} total rework
+                  </span>}
+                  {totalQcH > 0 && <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 11px', borderRadius: 99, fontSize: 11, fontWeight: 500, color: '#0D9488', background: '#F0FDFA', border: '1px solid #99F6E4' }}>
+                    Team QC overhead: {fmtH(totalQcH)}
                   </span>}
                   {totalShortfall > 0 && <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 11px', borderRadius: 99, fontSize: 11, fontWeight: 500, color: '#791F1F', background: '#FCEBEB', border: '1px solid #DC262640' }}>
                     ↓ {fmtH(totalShortfall)} total shortfall {belowTarget.filter(o => o.shortfall > 1).length > 0 && `(${belowTarget.filter(o => o.shortfall > 1).map(o => o.owner).join(', ')})`}

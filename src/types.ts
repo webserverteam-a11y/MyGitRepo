@@ -38,6 +38,20 @@ export interface TimeEvent {
   owner?: string;
 }
 
+export interface QCReview {
+  id: string;                    // unique e.g. 'qc_1743000000000'
+  submittedBy: string;           // owner name who submitted
+  submittedByDept: 'Content' | 'Web';  // which dept submitted
+  submittedAt: string;           // ISO timestamp
+  assignedTo: string;            // SEO owner assigned to review
+  estHours: number;              // review est hours set by submitter
+  note?: string;                 // optional note from submitter
+  startedAt?: string;            // when SEO started reviewing
+  completedAt?: string;          // when SEO finished
+  outcome?: 'Approved' | 'Rework';  // result of review
+  reworkNote?: string;           // if rework, why
+}
+
 export interface AdminOptions {
   clients: string[];
   seoOwners: string[];
@@ -99,4 +113,5 @@ export interface Task {
   adBudget?: number;
   dueDate?: string;
   assignedTo?: string;
+  qcReviews?: QCReview[];
 }

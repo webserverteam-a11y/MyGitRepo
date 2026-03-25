@@ -1,7 +1,7 @@
 import React, { useState, useRef, useMemo, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useAppContext } from '../context/AppContext';
-import { Task } from '../types';
+import { Task, QCReview } from '../types';
 import { Plus, Upload, Trash2, CheckSquare, Square, Download, History, X, RotateCcw, Eye } from 'lucide-react';
 import { cn } from '../utils';
 
@@ -80,6 +80,39 @@ export function TaskEntry() {
   });
 
   const [newTask, setNewTask] = useState<Task>(createEmptyTask());
+
+  // QC Reviews expanded state
+  const [expandedQcTaskIds, setExpandedQcTaskIds] = useState<Set<string>>(new Set());
+  const [addingQcForTaskId, setAddingQcForTaskId] = useState<string | null>(null);
+  const [newQcForm, setNewQcForm] = useState({ submittedBy: '', submittedByDept: 'Content' as 'Content' | 'Web', submittedAt: new Date().toISOString().split('T')[0], estHours: '0.25', assignedTo: '', outcome: '' as '' | 'Approved' | 'Rework', note: '' });
+
+  const toggleQcExpand = (taskId: string) => {
+    setExpandedQcTaskIds(prev => { const n = new Set(prev); n.has(taskId) ? n.delete(taskId) : n.add(taskId); return n; });
+  };
+
+  const addManualQcReview = (taskId: string) => {
+    const review: QCReview = {
+      id: `qc_${Date.now()}`,
+      submittedBy: newQcForm.submittedBy,
+      submittedByDept: newQcForm.submittedByDept,
+      submittedAt: new Date(newQcForm.submittedAt).toISOString(),
+      assignedTo: newQcForm.assignedTo,
+      estHours: parseFloat(newQcForm.estHours) || 0.25,
+      note: newQcForm.note || undefined,
+      outcome: newQcForm.outcome === 'Approved' ? 'Approved' : newQcForm.outcome === 'Rework' ? 'Rework' : undefined,
+      completedAt: newQcForm.outcome ? new Date().toISOString() : undefined,
+    };
+    setTasks(prev => prev.map(t => t.id === taskId ? { ...t, qcReviews: [...(t.qcReviews || []), review] } : t));
+    setAddingQcForTaskId(null);
+    setNewQcForm({ submittedBy: '', submittedByDept: 'Content', submittedAt: new Date().toISOString().split('T')[0], estHours: '0.25', assignedTo: '', outcome: '', note: '' });
+  };
+
+  const updateQcReview = (taskId: string, qcId: string, field: keyof QCReview, value: any) => {
+    setTasks(prev => prev.map(t => {
+      if (t.id !== taskId || !t.qcReviews) return t;
+      return { ...t, qcReviews: t.qcReviews.map(qr => qr.id === qcId ? { ...qr, [field]: value } : qr) };
+    }));
+  };
 
   const filteredTasks = useMemo(() => {
     return tasks.filter(t => {
@@ -510,7 +543,8 @@ export function TaskEntry() {
 
               {/* Existing Rows */}
               {filteredTasks.map(task => (
-                <tr key={task.id} className={cn(
+                <React.Fragment key={task.id}>
+                <tr className={cn(
                   "hover:bg-blue-50/50 transition-colors",
                   selectedIds.has(task.id) ? "bg-indigo-50/60" : "",
                   highlightIds.has(task.id) ? "bg-yellow-50 ring-1 ring-yellow-300" : ""
@@ -521,14 +555,136 @@ export function TaskEntry() {
                     </button>
                   </td>
                   <td className={cn("px-2 py-1 sticky left-8 z-10 border-r border-zinc-200", selectedIds.has(task.id) ? "bg-indigo-50" : "bg-white")}>
-                    <button onClick={() => deleteTask(task.id)} className="text-red-400 hover:text-red-600 p-1.5 hover:bg-red-50 rounded" title="Delete">
-                      <Trash2 size={16} />
-                    </button>
+                    <div className="flex items-center gap-1">
+                      <button onClick={() => deleteTask(task.id)} className="text-red-400 hover:text-red-600 p-1.5 hover:bg-red-50 rounded" title="Delete">
+                        <Trash2 size={16} />
+                      </button>
+                      {(task.qcReviews && task.qcReviews.length > 0) && (
+                        <button onClick={() => toggleQcExpand(task.id)}
+                          className="text-teal-600 hover:text-teal-800 text-[10px] font-bold px-1.5 py-0.5 rounded bg-teal-50 border border-teal-200 hover:bg-teal-100 whitespace-nowrap"
+                          title="Toggle QC Reviews">
+                          {expandedQcTaskIds.has(task.id) ? '▼' : '▶'} QC ({task.qcReviews.length})
+                        </button>
+                      )}
+                    </div>
                   </td>
                   {COLS.map((c, i) => (
                     <td key={i} className="px-2 py-1 border-r border-zinc-200">{c.render(task)}</td>
                   ))}
                 </tr>
+                {/* QC Reviews expandable section */}
+                {expandedQcTaskIds.has(task.id) && (
+                  <tr>
+                    <td colSpan={COLS.length + 2} className="bg-teal-50/40 border-b border-teal-200 px-4 py-3">
+                      <div className="space-y-2">
+                        <p className="text-xs font-bold text-teal-700 uppercase">QC Reviews ({(task.qcReviews || []).length})</p>
+                        {(task.qcReviews || []).map((qr: QCReview, idx: number) => {
+                          const actualMs = qr.startedAt && qr.completedAt ? new Date(qr.completedAt).getTime() - new Date(qr.startedAt).getTime() : 0;
+                          const actualMin = Math.round(actualMs / 60000);
+                          return (
+                            <div key={qr.id} className="bg-white border border-teal-200 rounded-xl p-3">
+                              <div className="flex items-center justify-between mb-2">
+                                <span className="text-xs font-bold text-teal-700">QC Review #{idx + 1}</span>
+                                <div className="flex items-center gap-2">
+                                  {qr.outcome === 'Approved' && <span className="text-xs font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-700">Approved ✓</span>}
+                                  {qr.outcome === 'Rework' && <span className="text-xs font-bold px-2 py-0.5 rounded bg-purple-100 text-purple-700">Rework ↩</span>}
+                                  {!qr.outcome && <span className="text-xs font-bold px-2 py-0.5 rounded bg-amber-50 text-amber-600">Pending</span>}
+                                  <select value={qr.outcome || ''} onChange={e => updateQcReview(task.id, qr.id, 'outcome', e.target.value || undefined)} className="text-[10px] border border-zinc-200 rounded px-1 py-0.5">
+                                    <option value="">Pending</option>
+                                    <option value="Approved">Approved</option>
+                                    <option value="Rework">Rework</option>
+                                  </select>
+                                </div>
+                              </div>
+                              <div className="grid grid-cols-4 gap-3 text-xs">
+                                <div>
+                                  <p className="text-teal-600 font-medium mb-0.5">Submitted by</p>
+                                  <p className="font-semibold text-zinc-800">{qr.submittedBy} ({qr.submittedByDept})</p>
+                                  <p className="text-zinc-400 text-[10px]">{new Date(qr.submittedAt).toLocaleDateString()}</p>
+                                </div>
+                                <div>
+                                  <p className="text-teal-600 font-medium mb-0.5">SEO Reviewer</p>
+                                  <input value={qr.assignedTo} onChange={e => updateQcReview(task.id, qr.id, 'assignedTo', e.target.value)} className="w-full text-xs border border-zinc-200 rounded px-1.5 py-0.5 font-semibold" />
+                                </div>
+                                <div>
+                                  <p className="text-teal-600 font-medium mb-0.5">Est</p>
+                                  <input type="number" step="0.25" value={qr.estHours} onChange={e => updateQcReview(task.id, qr.id, 'estHours', parseFloat(e.target.value) || 0)} className="w-full text-xs border border-zinc-200 rounded px-1.5 py-0.5 font-semibold" />
+                                  <p className="text-zinc-400 text-[10px]">Actual: {actualMs > 0 ? `${actualMin}m` : '—'}</p>
+                                </div>
+                                <div>
+                                  <p className="text-teal-600 font-medium mb-0.5">Note</p>
+                                  <input value={qr.note || ''} onChange={e => updateQcReview(task.id, qr.id, 'note', e.target.value)} className="w-full text-xs border border-zinc-200 rounded px-1.5 py-0.5" placeholder="Note..." />
+                                  {qr.reworkNote && <p className="text-purple-600 text-[10px] mt-0.5 italic">Rework: {qr.reworkNote}</p>}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                        {/* Add QC Review manually */}
+                        {addingQcForTaskId === task.id ? (
+                          <div className="bg-white border border-teal-200 rounded-xl p-3">
+                            <p className="text-xs font-bold text-teal-700 mb-2">+ Add QC Review manually</p>
+                            <div className="grid grid-cols-4 gap-3 text-xs mb-2">
+                              <div>
+                                <label className="text-teal-600 font-medium block mb-0.5">Submitted by</label>
+                                <select value={newQcForm.submittedBy} onChange={e => setNewQcForm(f => ({...f, submittedBy: e.target.value}))} className="w-full border border-zinc-200 rounded px-1.5 py-1 text-xs">
+                                  <option value="">Select...</option>
+                                  {[...adminOptions.contentOwners, ...adminOptions.webOwners, ...adminOptions.seoOwners].map(o => <option key={o}>{o}</option>)}
+                                </select>
+                              </div>
+                              <div>
+                                <label className="text-teal-600 font-medium block mb-0.5">Dept</label>
+                                <select value={newQcForm.submittedByDept} onChange={e => setNewQcForm(f => ({...f, submittedByDept: e.target.value as 'Content' | 'Web'}))} className="w-full border border-zinc-200 rounded px-1.5 py-1 text-xs">
+                                  <option value="Content">Content</option>
+                                  <option value="Web">Web</option>
+                                </select>
+                              </div>
+                              <div>
+                                <label className="text-teal-600 font-medium block mb-0.5">Date</label>
+                                <input type="date" value={newQcForm.submittedAt} onChange={e => setNewQcForm(f => ({...f, submittedAt: e.target.value}))} className="w-full border border-zinc-200 rounded px-1.5 py-1 text-xs" />
+                              </div>
+                              <div>
+                                <label className="text-teal-600 font-medium block mb-0.5">Est (hrs)</label>
+                                <input type="number" step="0.25" value={newQcForm.estHours} onChange={e => setNewQcForm(f => ({...f, estHours: e.target.value}))} className="w-full border border-zinc-200 rounded px-1.5 py-1 text-xs" />
+                              </div>
+                            </div>
+                            <div className="grid grid-cols-4 gap-3 text-xs mb-3">
+                              <div>
+                                <label className="text-teal-600 font-medium block mb-0.5">Assigned to</label>
+                                <select value={newQcForm.assignedTo} onChange={e => setNewQcForm(f => ({...f, assignedTo: e.target.value}))} className="w-full border border-zinc-200 rounded px-1.5 py-1 text-xs">
+                                  <option value="">Select...</option>
+                                  {adminOptions.seoOwners.map(o => <option key={o}>{o}</option>)}
+                                </select>
+                              </div>
+                              <div>
+                                <label className="text-teal-600 font-medium block mb-0.5">Outcome</label>
+                                <select value={newQcForm.outcome} onChange={e => setNewQcForm(f => ({...f, outcome: e.target.value as any}))} className="w-full border border-zinc-200 rounded px-1.5 py-1 text-xs">
+                                  <option value="">Pending</option>
+                                  <option value="Approved">Approved</option>
+                                  <option value="Rework">Rework</option>
+                                </select>
+                              </div>
+                              <div className="col-span-2">
+                                <label className="text-teal-600 font-medium block mb-0.5">Note</label>
+                                <input value={newQcForm.note} onChange={e => setNewQcForm(f => ({...f, note: e.target.value}))} placeholder="Optional note..." className="w-full border border-zinc-200 rounded px-1.5 py-1 text-xs" />
+                              </div>
+                            </div>
+                            <div className="flex gap-2">
+                              <button onClick={() => addManualQcReview(task.id)} disabled={!newQcForm.submittedBy || !newQcForm.assignedTo} className="px-3 py-1 text-xs font-medium bg-teal-600 text-white rounded-lg hover:bg-teal-700 disabled:opacity-50">Add</button>
+                              <button onClick={() => setAddingQcForTaskId(null)} className="px-3 py-1 text-xs text-zinc-500 hover:text-zinc-700">Cancel</button>
+                            </div>
+                          </div>
+                        ) : (
+                          <button onClick={() => { setAddingQcForTaskId(task.id); setNewQcForm({ submittedBy: '', submittedByDept: 'Content', submittedAt: new Date().toISOString().split('T')[0], estHours: '0.25', assignedTo: '', outcome: '', note: '' }); }}
+                            className="text-xs font-medium text-teal-600 hover:text-teal-800 px-2 py-1 rounded border border-teal-200 bg-white hover:bg-teal-50">
+                            + Add QC Review manually
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                )}
+                </React.Fragment>
               ))}
             </tbody>
           </table>

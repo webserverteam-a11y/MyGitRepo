@@ -3,7 +3,8 @@ import { createPortal } from 'react-dom';
 import { useAppContext } from '../context/AppContext';
 import { Task } from '../types';
 import { cn, getDeptDelayedInfo } from '../utils';
-import { getTaskEstHours } from '../utils/productiveHours';
+import { getTaskEstHours, calcTaskProductiveMs, calcOwnerEstHrs } from '../utils/productiveHours';
+import { useAllOwners } from '../hooks/useAllOwners';
 import { X, Play, Pause, CheckCircle2, Pencil, Save, ChevronDown, ChevronUp } from 'lucide-react';
 
 type ExecutionState = 'Not Started' | 'In Progress' | 'Paused' | 'Rework' | 'Ended';
@@ -440,6 +441,7 @@ export function TodayTasks({ tasks: propTasks }: { tasks: Task[] }) {
 
   // Owner capacity for insights
   const myOwnerName = currentUser?.ownerName || '';
+  const allOwners = useAllOwners();
   const myAssignedHrs = useMemo(() => {
     return propTasks.filter(t => t.seoOwner === myOwnerName && !t.isCompleted)
       .reduce((s, t) => s + (t.estHoursSEO || t.estHours || 0), 0);
@@ -686,6 +688,60 @@ export function TodayTasks({ tasks: propTasks }: { tasks: Task[] }) {
           </div>
         </div>
       )}
+
+      {/* ── PIPELINE CAPACITY TUBE ── */}
+      {isToday && (() => {
+        const pipelineOwners = isAdmin ? allOwners : (myOwnerName ? [myOwnerName] : []);
+        if (pipelineOwners.length === 0) return null;
+        return (
+          <div className="bg-white border border-zinc-200 rounded-xl px-4 py-3 shadow-sm">
+            <p style={{ fontSize: 10, fontWeight: 600, color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 8 }}>Pipeline capacity</p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {pipelineOwners.map(owner => {
+                const ownerTasks = propTasks.filter(t => t.seoOwner === owner || t.contentOwner === owner || t.webOwner === owner || t.assignedTo === owner);
+                const doneTasks = ownerTasks.filter(t => t.isCompleted || t.executionState === 'Ended');
+                const runningTasks = ownerTasks.filter(t => t.executionState === 'In Progress' || t.executionState === 'Rework');
+                const pipelineTasks = ownerTasks.filter(t => !t.isCompleted && t.executionState !== 'Ended' && t.executionState !== 'In Progress' && t.executionState !== 'Rework');
+                const doneH = doneTasks.reduce((s, t) => s + calcTaskProductiveMs(t, owner, todayStr, todayStr), 0) / 3600000;
+                const runningH = runningTasks.reduce((s, t) => s + calcOwnerEstHrs(t, owner), 0);
+                const pipelineH = pipelineTasks.reduce((s, t) => s + calcOwnerEstHrs(t, owner), 0);
+                const totalUsed = doneH + runningH + pipelineH;
+                const freeH = Math.max(0, TARGET_H - totalUsed);
+                const overflow = Math.max(0, totalUsed - TARGET_H);
+                const totalBar = Math.max(TARGET_H, totalUsed);
+                const seg = (h: number) => totalBar > 0 ? Math.round(h / totalBar * 100) : 0;
+                return (
+                  <div key={owner} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: 11, fontWeight: 500, color: '#185FA5', minWidth: 80, textAlign: 'right' }}>{owner}</span>
+                    <div style={{ flex: 1, height: 16, borderRadius: 8, background: '#F3F4F6', overflow: 'hidden', display: 'flex', position: 'relative' }}>
+                      {doneH > 0 && <div style={{ width: `${seg(doneH)}%`, background: '#059669', height: '100%', transition: 'width .3s' }} title={`Done: ${doneH.toFixed(1)}h`} />}
+                      {runningH > 0 && <div style={{ width: `${seg(runningH)}%`, background: '#D97706', height: '100%', transition: 'width .3s', animation: 'pulse 2s infinite' }} title={`Running: ${runningH.toFixed(1)}h`} />}
+                      {pipelineH > 0 && <div style={{ width: `${seg(pipelineH)}%`, background: '#2563EB', height: '100%', transition: 'width .3s' }} title={`Pipeline: ${pipelineH.toFixed(1)}h`} />}
+                      {freeH > 0 && <div style={{ width: `${seg(freeH)}%`, background: '#E5E7EB', height: '100%' }} title={`Free: ${freeH.toFixed(1)}h`} />}
+                      {overflow > 0 && <div style={{ width: `${seg(overflow)}%`, background: '#DC2626', height: '100%' }} title={`Overflow: ${overflow.toFixed(1)}h`} />}
+                    </div>
+                    <div style={{ display: 'flex', gap: 4, fontSize: 9, flexShrink: 0, minWidth: 180 }}>
+                      {doneH > 0 && <span style={{ color: '#059669', fontWeight: 600 }}>✓{doneH.toFixed(1)}h</span>}
+                      {runningH > 0 && <span style={{ color: '#D97706', fontWeight: 600 }}>▶{runningH.toFixed(1)}h</span>}
+                      {pipelineH > 0 && <span style={{ color: '#2563EB', fontWeight: 500 }}>◇{pipelineH.toFixed(1)}h</span>}
+                      {freeH > 0.1 && <span style={{ color: '#9CA3AF' }}>{freeH.toFixed(1)}h free</span>}
+                      {overflow > 0 && <span style={{ color: '#DC2626', fontWeight: 700 }}>+{overflow.toFixed(1)}h over</span>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{ fontSize: 9, color: 'var(--color-text-tertiary)', marginTop: 6, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}><span style={{ width: 8, height: 8, borderRadius: 2, background: '#059669', display: 'inline-block' }} /> Done</span>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}><span style={{ width: 8, height: 8, borderRadius: 2, background: '#D97706', display: 'inline-block' }} /> Running</span>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}><span style={{ width: 8, height: 8, borderRadius: 2, background: '#2563EB', display: 'inline-block' }} /> Pipeline</span>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}><span style={{ width: 8, height: 8, borderRadius: 2, background: '#E5E7EB', display: 'inline-block' }} /> Free</span>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}><span style={{ width: 8, height: 8, borderRadius: 2, background: '#DC2626', display: 'inline-block' }} /> Overflow</span>
+              <span>({TARGET_H}h/day target)</span>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ── KANBAN ── */}
       {isSEO && viewMode === 'kanban' && (
