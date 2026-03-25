@@ -124,6 +124,37 @@ export function ActionView() {
     return () => clearInterval(interval);
   }, []);
 
+  const getTaskTimes = (task: Task) => {
+    let activeMs = 0, pauseMs = 0, reworkMs = 0;
+    let lastStart = 0, lastPause = 0, lastRework = 0;
+    let state = 'Not Started';
+    // Filter to current department only so cross-dept time doesn't inflate numbers
+    const deptEvents = (task.timeEvents || []).filter(e => e.department === task.currentOwner);
+    deptEvents.forEach(e => {
+      const t = new Date(e.timestamp).getTime();
+      if (e.type === 'start' || e.type === 'resume') {
+        if (state === 'Paused' && lastPause) pauseMs += (t - lastPause);
+        lastStart = t; state = 'In Progress';
+      } else if (e.type === 'pause') {
+        if (state === 'In Progress' && lastStart) activeMs += (t - lastStart);
+        if (state === 'Rework' && lastRework) reworkMs += (t - lastRework);
+        lastPause = t; state = 'Paused';
+      } else if (e.type === 'rework_start') {
+        if (state === 'Paused' && lastPause) pauseMs += (t - lastPause);
+        if (state === 'In Progress' && lastStart) activeMs += (t - lastStart);
+        lastRework = t; state = 'Rework';
+      } else if (e.type === 'end') {
+        if (state === 'In Progress' && lastStart) activeMs += (t - lastStart);
+        if (state === 'Rework' && lastRework) reworkMs += (t - lastRework);
+        state = 'Ended';
+      }
+    });
+    if (task.executionState === 'In Progress' && lastStart) activeMs += (now - lastStart);
+    if (task.executionState === 'Rework' && lastRework) reworkMs += (now - lastRework);
+    if (task.executionState === 'Paused' && lastPause) pauseMs += (now - lastPause);
+    return { activeMs, pauseMs, reworkMs };
+  };
+
   const filteredTasks = useMemo(() => {
     return visibleTasks.filter(t => {
       // Use the relevant assigned date depending on current owner dept
@@ -208,37 +239,6 @@ export function ActionView() {
     a.href = url;
     a.download = `action-board-${new Date().toISOString().split('T')[0]}.csv`;
     a.click();
-  };
-
-  const getTaskTimes = (task: Task) => {
-    let activeMs = 0, pauseMs = 0, reworkMs = 0;
-    let lastStart = 0, lastPause = 0, lastRework = 0;
-    let state = 'Not Started';
-    // Filter to current department only so cross-dept time doesn't inflate numbers
-    const deptEvents = (task.timeEvents || []).filter(e => e.department === task.currentOwner);
-    deptEvents.forEach(e => {
-      const t = new Date(e.timestamp).getTime();
-      if (e.type === 'start' || e.type === 'resume') {
-        if (state === 'Paused' && lastPause) pauseMs += (t - lastPause);
-        lastStart = t; state = 'In Progress';
-      } else if (e.type === 'pause') {
-        if (state === 'In Progress' && lastStart) activeMs += (t - lastStart);
-        if (state === 'Rework' && lastRework) reworkMs += (t - lastRework);
-        lastPause = t; state = 'Paused';
-      } else if (e.type === 'rework_start') {
-        if (state === 'Paused' && lastPause) pauseMs += (t - lastPause);
-        if (state === 'In Progress' && lastStart) activeMs += (t - lastStart);
-        lastRework = t; state = 'Rework';
-      } else if (e.type === 'end') {
-        if (state === 'In Progress' && lastStart) activeMs += (t - lastStart);
-        if (state === 'Rework' && lastRework) reworkMs += (t - lastRework);
-        state = 'Ended';
-      }
-    });
-    if (task.executionState === 'In Progress' && lastStart) activeMs += (now - lastStart);
-    if (task.executionState === 'Rework' && lastRework) reworkMs += (now - lastRework);
-    if (task.executionState === 'Paused' && lastPause) pauseMs += (now - lastPause);
-    return { activeMs, pauseMs, reworkMs };
   };
 
   const formatMs = (ms: number) => {
